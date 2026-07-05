@@ -1,0 +1,8 @@
+add_library(lsm
+  status.cpp
+  db.cpp
+  db_impl.cpp
+)
+
+target_include_directories(lsm PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(lsm PRIVATE lsm_warnings)
