@@ -1,0 +1,9 @@
+# google style, kept plain on purpose. clarity over cleverness.
+---
+BasedOnStyle: Google
+ColumnLimit: 100
+PointerAlignment: Left
+DerivePointerAlignment: false
+SortIncludes: true
+IncludeBlocks: Regroup
+AllowShortFunctionsOnASingleLine: All
