@@ -15,7 +15,7 @@ made in [`docs/design.md`](docs/design.md).
 ## status
 
 - [x] **m1** — skeleton: public api, build, tests, sanitizers, ci
-- [ ] m2 — skip-list memtable
+- [x] **m2** — skip-list memtable: ordered store, tombstones, memory accounting
 - [ ] m3 — write-ahead log + recovery
 - [ ] m4 — sstable flush + manifest
 - [ ] m5 — read path + bloom filters
