@@ -13,7 +13,7 @@ Status DBImpl::Put(std::string_view key, std::string_view value) {
     return Status::InvalidArgument("empty key");
   }
   const std::lock_guard<std::mutex> lock(mu_);
-  store_.insert_or_assign(std::string(key), std::string(value));
+  mem_.Put(key, value);
   return Status::Ok();
 }
 
@@ -22,7 +22,7 @@ Status DBImpl::Delete(std::string_view key) {
     return Status::InvalidArgument("empty key");
   }
   const std::lock_guard<std::mutex> lock(mu_);
-  store_.erase(std::string(key));
+  mem_.Delete(key);
   return Status::Ok();
 }
 
@@ -31,16 +31,16 @@ Status DBImpl::Get(std::string_view key, std::string* value) {
     return Status::InvalidArgument("null value out-pointer");
   }
   const std::lock_guard<std::mutex> lock(mu_);
-  const auto it = store_.find(key);
-  if (it == store_.end()) {
-    return Status::NotFound();
+  // a tombstone and an absent key both read as not-found here; the distinction
+  // only matters once older sstables can be consulted (m5).
+  if (mem_.Get(key, value) == MemTable::GetResult::kFound) {
+    return Status::Ok();
   }
-  *value = it->second;
-  return Status::Ok();
+  return Status::NotFound();
 }
 
 Status DBImpl::Close() {
-  // Nothing durable to flush yet; the wal and sstable flush arrive in m3/m4.
+  // nothing durable to flush yet; the wal and sstable flush arrive in m3/m4.
   return Status::Ok();
 }
 

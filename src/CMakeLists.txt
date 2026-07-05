@@ -1,5 +1,7 @@
 add_library(lsm
   status.cpp
+  skiplist.cpp
+  memtable.cpp
   db.cpp
   db_impl.cpp
 )
