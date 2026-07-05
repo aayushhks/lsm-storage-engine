@@ -1,0 +1,15 @@
+# build trees
+/build*/
+
+# compiled objects and archives
+*.o
+*.a
+
+# clang tooling output
+compile_commands.json
+.cache/
+
+# editor and os cruft
+.DS_Store
+.vscode/
+.idea/
