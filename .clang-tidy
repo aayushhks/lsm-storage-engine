@@ -1,0 +1,28 @@
+# curated check set. every diagnostic is an error in ci. disabled checks are
+# listed with a one-line reason so the choice is defensible in review.
+---
+Checks: >
+  bugprone-*,
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-identifier-length,
+  -bugprone-easily-swappable-parameters,
+  -modernize-use-nodiscard
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/(include/lsm|src)/.*'
+FormatStyle: file
+# rationale for the disables:
+#   modernize-use-trailing-return-type    - style churn, no clarity gain here.
+#   readability-magic-numbers             - a storage format is full of legit
+#   cppcoreguidelines-avoid-magic-numbers   constants; they get named/commented
+#                                           where it matters instead.
+#   readability-identifier-length         - short names like i, k, mu are idiomatic.
+#   bugprone-easily-swappable-parameters  - Put(key, value) is a deliberate api shape.
+#   modernize-use-nodiscard               - avoid annotating every accessor for now.
