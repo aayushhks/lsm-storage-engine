@@ -64,3 +64,71 @@ real tombstone semantics arrive with the memtable.
   m6 when compaction introduces threads.
 - Ci runs four jobs on every push: build-and-test across {gcc, clang} ×
   {Debug, Release}, an asan+ubsan test job, clang-tidy, and clang-format.
+
+## m2 — memtable
+
+### scope
+
+The mutable in-memory write buffer, backed by a hand-written skip list. Put,
+Get, and Delete (as tombstones), approximate memory accounting for the flush
+decision, and an ordered iterator. This replaces the m1 placeholder `std::map`
+inside the engine; the public api is unchanged.
+
+### skip list vs. a balanced tree
+
+Both give ordered storage with O(log n) search. The skip list wins here for two
+reasons:
+
+- **Simplicity of a correct implementation.** A skip list inserts by finding the
+  predecessor at each level and splicing forward pointers — no rotations, no
+  rebalancing, no parent pointers, no red/black invariants to preserve. That is
+  far less code to get right and to defend line by line than an AVL or red-black
+  tree, and the balance is probabilistic rather than maintained.
+- **Concurrency-friendliness.** This is why LevelDB and RocksDB use a skip list
+  for the memtable. Inserts touch only the O(log n) forward pointers on the
+  search path and never restructure existing nodes, so a single writer can
+  publish a new node with a release store while lock-free readers traverse
+  safely — no reader ever observes a half-rotated tree. We do not exploit that
+  yet (m2 serializes access with a mutex in the engine), but choosing the skip
+  list keeps that door open for the concurrency work in m6, and it is the honest
+  reason the structure is the industry default here.
+
+The tradeoff we accept: probabilistic (not worst-case) bounds, and slightly
+worse cache locality than a compact tree because nodes are individually
+allocated. For a memtable that is written sequentially and flushed wholesale,
+neither matters much.
+
+Parameters: max height 12, branching factor 4 (a node gains each additional
+level with probability 1/4). That averages ~1.33 forward pointers per node and
+supports far more entries than a memtable holds before flushing. The level rng
+is seeded with a fixed constant so behavior is reproducible in tests.
+
+### tombstone semantics
+
+`Delete(key)` does not erase the entry — it writes a marker node tagged
+`kTombstone` with no value bytes, overwriting any live value for that key. This
+is essential to an lsm tree: when this memtable is later flushed to an sstable,
+the tombstone must be persisted so it can shadow older values for the same key
+that still live in older sstables. A `Get` therefore distinguishes three
+outcomes — found (live value), deleted (a tombstone is present), and not-present
+(the key is absent from this table). At the single-table stage the last two both
+read as not-found to the user, but the distinction is what makes the multi-table
+read path (m5) correct.
+
+### memory accounting
+
+The memtable maintains an approximate byte count to drive the flush threshold
+(m4). A new entry adds key bytes + value bytes + a fixed per-node overhead
+estimate; an overwrite adjusts only by the change in value size; a delete
+reclaims the replaced value's bytes. The estimate is deliberately approximate —
+it only needs to fire a flush near the configured threshold, not to measure heap
+usage exactly.
+
+### ownership and safety
+
+Every node is heap-allocated once and owned by a vector of `unique_ptr` in the
+skip list, so cleanup is raii with no manual `delete`. Forward pointers are
+non-owning raw pointers into those stable heap nodes. The one clang-tidy
+suppression in the engine is a scoped `NOLINT` over the fixed-array index math in
+`Insert`, where every index is a level provably in `[0, kMaxHeight)`; the check
+is left enabled everywhere else.
