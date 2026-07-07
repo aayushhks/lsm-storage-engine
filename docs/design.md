@@ -132,3 +132,74 @@ non-owning raw pointers into those stable heap nodes. The one clang-tidy
 suppression in the engine is a scoped `NOLINT` over the fixed-array index math in
 `Insert`, where every index is a level provably in `[0, kMaxHeight)`; the check
 is left enabled everywhere else.
+
+## m3 — write-ahead log and recovery
+
+### scope
+
+Durability. Every mutation is appended and fsync'd to an append-only log before
+it becomes visible in the memtable, and `Open` replays the log to rebuild the
+memtable. A torn or corrupt tail record is detected and truncated so recovery
+never fails on a bad tail.
+
+### on-disk format
+
+Each record is framed as:
+
+```
+[payload length : u32 le][crc32 of payload : u32 le][payload bytes]
+```
+
+and the payload is one encoded mutation:
+
+```
+[type : u8][key length : u32 le][key bytes][value length : u32 le][value bytes]
+```
+
+`type` is 0 for a put and 1 for a delete (a delete carries a zero-length value).
+Integers are little-endian and written byte-wise, so the format does not depend
+on host endianness. The crc-32 (ieee 802.3, implemented from scratch with a
+compile-time table) covers the payload; the length prefix bounds how much to
+read. Keys and values are arbitrary byte strings, so lengths — not delimiters —
+frame every field.
+
+### write path and ordering
+
+`Put`/`Delete` encode the mutation, `write()` the framed bytes, and `fsync()`
+before returning; only then is the memtable updated. This ordering is the whole
+point of a wal: if the process dies after the fsync but before (or during) the
+memtable update, replay reconstructs the exact state, and if it dies before the
+fsync the mutation simply never happened. When the log file is first created its
+parent directory is fsync'd too, so the directory entry itself is durable, not
+just the file's data.
+
+### recovery and tail corruption
+
+On `Open` the log is read record by record. Recovery stops at the first record
+that is incomplete (fewer bytes than its length claims) or whose crc does not
+match, and the file is truncated at that boundary so later appends continue from
+a clean edge. In an append-only, fsync-per-write log the only place a partial or
+corrupt record can appear is the tail — a write that was interrupted by a crash —
+so stopping at the first bad record and dropping the remainder is both correct
+and the standard rule. Recovery of a good prefix followed by a torn tail yields
+exactly the records that were durably committed. A missing log is not an error:
+it means nothing was written yet.
+
+### fsync-per-write vs. group commit
+
+We fsync on every write. That makes each successful `Put`/`Delete` individually
+durable — the strongest and simplest guarantee — but caps write throughput at
+roughly one fsync per operation (one disk flush each), which dominates the write
+cost. The standard optimization is **group commit**: batch the records from many
+concurrent writers into one `write` + `fsync`, amortizing the flush across the
+whole batch and multiplying throughput at the cost of a small latency window
+where a just-returned writer's data is not yet flushed (usually resolved by not
+acknowledging until the shared fsync completes). Group commit is a listed stretch
+goal (2); the profiling milestone (m8) is expected to show fsync as the write-path
+hotspot, which is exactly the honest motivation for it.
+
+### where this is headed
+
+The wal grows unbounded until m4, where a memtable flush to an sstable makes the
+buffered data durable in a different form and lets the corresponding log be
+rotated away. Until then the single `wal.log` is the sole source of durability.
