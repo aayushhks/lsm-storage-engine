@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <system_error>
+#include <utility>
 
 #include "db_impl.h"
 
@@ -37,7 +38,12 @@ Status DB::Open(const Options& options, const std::string& dir, std::unique_ptr<
     return Status::InvalidArgument("path exists and is not a directory: " + dir);
   }
 
-  *handle = std::make_unique<DBImpl>(dir);
+  auto impl = std::make_unique<DBImpl>(dir);
+  Status recovered = impl->Recover();
+  if (!recovered.ok()) {
+    return recovered;
+  }
+  *handle = std::move(impl);
   return Status::Ok();
 }
 

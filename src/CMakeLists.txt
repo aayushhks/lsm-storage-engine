@@ -1,7 +1,10 @@
 add_library(lsm
   status.cpp
+  crc32.cpp
+  coding.cpp
   skiplist.cpp
   memtable.cpp
+  wal.cpp
   db.cpp
   db_impl.cpp
 )
