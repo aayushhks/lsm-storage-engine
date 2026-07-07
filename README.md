@@ -16,7 +16,7 @@ made in [`docs/design.md`](docs/design.md).
 
 - [x] **m1** — skeleton: public api, build, tests, sanitizers, ci
 - [x] **m2** — skip-list memtable: ordered store, tombstones, memory accounting
-- [ ] m3 — write-ahead log + recovery
+- [x] **m3** — write-ahead log + recovery: crc32 framing, fsync-per-write, tail truncation
 - [ ] m4 — sstable flush + manifest
 - [ ] m5 — read path + bloom filters
 - [ ] m6 — background compaction
