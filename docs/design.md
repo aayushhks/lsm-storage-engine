@@ -203,3 +203,89 @@ hotspot, which is exactly the honest motivation for it.
 The wal grows unbounded until m4, where a memtable flush to an sstable makes the
 buffered data durable in a different form and lets the corresponding log be
 rotated away. Until then the single `wal.log` is the sole source of durability.
+
+## m4 — sstable flush and the manifest
+
+### scope
+
+When the memtable crosses its size threshold it is written out as an immutable
+sorted table (an sstable), a manifest records the live set of tables atomically,
+and the wal is rotated away. Reads now consult the memtable and then the
+sstables newest-to-oldest. Per-table bloom filters and the read-amplification
+analysis are m5; the read path itself lands here because "reopen sees all data"
+cannot be tested without it.
+
+### sstable format
+
+```
+[data block 0][data block 1] ... [index block][footer]
+```
+
+A data block is a run of entries `[keylen u32][key][tag u8][vallen u32][value]`,
+written in ascending key order (the memtable iterator provides that order for
+free). Blocks are cut at a ~4 KiB boundary. The sparse index holds one entry per
+block — `[keylen u32][first key][block offset u64][block size u32]` — so it costs
+one index slot per block rather than per key. The fixed 24-byte footer is
+`[index offset u64][index size u64][magic u64]`; the reader reads the footer
+first, validates the magic, then loads the index.
+
+A point lookup binary-searches the sparse index for the last block whose first
+key is `<= target` (the only block that can hold the key, since block *i* owns
+`[first_key_i, first_key_{i+1})`), preads just that block, and scans it. The
+index lives in memory; data blocks are read on demand with `pread`, which is
+positioned and stateless — no shared file offset — so a reader is safe to share
+across threads when concurrency arrives in m6.
+
+### the manifest and why atomic rename matters
+
+The manifest is the source of truth for which sstables are live: a small file
+holding the next file number to allocate and the live table numbers, newest
+first. It is rewritten by `WriteFileAtomic` — write a sibling `.tmp`, fsync it,
+`rename()` it over the manifest, then fsync the directory. `rename` is atomic on
+posix: a reader (including recovery after a crash) sees either the entire old
+manifest or the entire new one, never a spliced mix. That is the whole reason a
+checksum is unnecessary here — a torn manifest is simply unrepresentable. Writing
+the manifest in place, by contrast, could leave a half-updated table list that
+points at nothing or omits a real table.
+
+### flush ordering and the crash-recovery rule
+
+A flush proceeds in a fixed order, and the order *is* the correctness argument:
+
+1. build the sstable and `WriteFileSync` it (data + fsync + directory fsync);
+2. commit the manifest atomically, now including the new table;
+3. only then rotate the wal — close it, delete it, open a fresh empty one;
+4. reset the memtable.
+
+The recovery rule on `Open`: **the manifest names the live sstables; anything
+else on disk is ignored; then the wal is replayed on top.** Because the wal is
+deleted only *after* the manifest commit, every crash point is safe:
+
+- crash after step 1, before step 2 — the manifest does not mention the new
+  table, so it is an ignored orphan, and the wal (not yet rotated) still holds
+  every mutation; replay rebuilds the memtable with no loss.
+- crash after step 2, before step 3 — the manifest names the table and the wal
+  still holds the same mutations; replay re-applies them over identical sstable
+  data, which is redundant but consistent (a later flush would just rewrite them).
+
+The `OrphanSstableIgnoredAndWalRecovers` test exercises the first case directly:
+an sstable with deliberately wrong data is dropped in the directory without a
+manifest, and recovery still returns the correct values from the wal. Orphaned
+sstables currently leak on disk; reclaiming them is a listed next step.
+
+### read path
+
+`Get` checks the memtable first — a hit or a tombstone there wins outright,
+because it is the newest data — then the sstables newest-to-oldest, stopping at
+the first hit or tombstone. This is what makes deletes and overwrites correct
+across the flush boundary: a newer tombstone or value shadows anything older.
+The cost is read amplification — a miss may touch every table — which is exactly
+what the m5 bloom filters exist to cut down, and what m5 measures.
+
+### tradeoff: whole-table-in-memory build
+
+The builder assembles the entire table in a `std::string` before writing it.
+That caps transient memory at roughly the flush threshold (a few MiB by default)
+and keeps the builder trivial to unit-test as a pure function of its inputs. A
+streaming builder that writes blocks as it goes would remove that transient, and
+is a reasonable later change; at the current scope the simplicity is worth more.
