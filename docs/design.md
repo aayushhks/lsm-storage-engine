@@ -354,3 +354,97 @@ of tables) block reads into O(number of tables · fpr), which matters more as
 tables accumulate before compaction (m6). The cost is the filter's space (~9.6
 bits per key at the default rate) and one in-memory bit-probe per table on the
 read path.
+
+## m6 — background compaction
+
+### scope
+
+A single background thread performs size-tiered compaction: when enough
+similarly sized sstables accumulate it merges them, dropping shadowed values and
+garbage-collecting tombstones that are safe to drop. This is the milestone that
+introduces real concurrency, so the synchronization is the central design
+decision, validated under ThreadSanitizer in ci.
+
+### synchronization: an immutable, reference-counted table-set snapshot
+
+The choice was between a `shared_mutex` (readers share, compaction excludes) and
+an immutable snapshot of the file set. We use the **snapshot**.
+
+The live set of tables is a `shared_ptr<const vector<TableHandle>>` — an
+immutable value. A single ordinary mutex guards the small mutable state (the
+memtable, the current-snapshot pointer, the wal, the file-number counter), and it
+is held only for in-memory work. A read takes the lock just long enough to
+consult the memtable and copy the snapshot pointer, then releases it and reads
+sstables with **no lock held**. Compaction does its heavy work — reading inputs,
+the k-way merge, writing the output — entirely outside the lock, and takes the
+lock only to publish a new snapshot pointer and rewrite the manifest.
+
+Why this is correct under a concurrent compaction:
+
+- A reader that copied the old snapshot keeps the old `SSTableReader` objects
+  alive through the `shared_ptr` refcount, so they are never destroyed mid-read.
+- Sstables are immutable and read with `pread` (positioned, no shared file
+  offset), so any number of threads — foreground reads and the compaction merge —
+  can read the same table at once with no data race.
+- When compaction deletes a merged-away input file, a reader still holding it
+  open is unaffected: posix keeps the inode until the last descriptor closes, and
+  the snapshot keeps that descriptor open. The file just disappears from future
+  `Open`s (the manifest no longer names it).
+
+The result is that compaction never blocks a read and never invalidates one, and
+the only lock a read contends on is held for a couple of in-memory operations.
+This is why it beats a `shared_mutex`, under which a read would hold a shared
+lock across its sstable i/o and a compaction's exclusive swap would have to wait
+for every in-flight reader. Flushes are still synchronous under the lock (a known
+serialization point; an immutable-memtable async flush is the natural next step).
+
+### size-tiered vs. leveled compaction
+
+Both bound the number of sstables a read may consult, but they trade the two
+amplifications differently:
+
+- **Write amplification** — how many times a given byte is rewritten over its
+  life. Size-tiered rewrites a byte roughly once per tier it passes through, so
+  ~O(log_F N) times; leveled rewrites more, because merging a table into the next
+  level rewrites the overlapping portion of that whole level — typically ~O(F ·
+  levels), a larger constant. **Size-tiered wins on write amplification.**
+- **Space amplification** — extra disk beyond the live data. Size-tiered can hold
+  several tables of the same tier containing overwritten/deleted versions of the
+  same keys before they merge, so it can transiently use ~2× or more. Leveled
+  keeps at most one table per key-range per level, so space amplification is low
+  (~1.1×). **Leveled wins on space amplification.**
+- **Read amplification** — both consult O(number of tables/levels); the bloom
+  filters (m5) cut the miss cost either way.
+
+Size-tiered is the right scope here: it is dramatically simpler to implement
+correctly (merge a group of whole tables; no per-level key-range bookkeeping),
+its lower write amplification suits a write-heavy log-structured store, and the
+transient space cost is acceptable for a single-node engine. Leveled's win is
+space, which matters most at scale with tight disk budgets — out of scope for
+this project and listed as a next step.
+
+### the policy and tombstone gc
+
+Tables are kept newest-first. A table's *tier* is `floor(log_F(size))` with the
+fanout `F` = `compaction_min_merge` (default 4). The picker scans for the first
+contiguous run of same-tier tables of length ≥ `min_merge` and merges that whole
+run into one table (which, being ~`F`× larger, lands in the next tier). Selecting
+a **contiguous** run is what keeps precedence correct: the merged output takes the
+run's position in the age order, so no table outside the run can sit between the
+inputs in age and be wrongly shadowed.
+
+The k-way merge emits, per key, only the newest version across the inputs —
+dropping shadowed values for free. A tombstone is dropped only when the
+compaction includes the oldest table in the database (`drop_tombstones`): if any
+older table outside the merge could still hold the key, the tombstone must
+survive to keep shadowing it. Dropping it prematurely would resurrect deleted
+data — the classic tombstone-resurrection bug, which the
+`KeepsTombstoneWhenOlderTablesRemain` test guards against.
+
+### crash safety
+
+Compaction reuses the m4 rule: write the merged sstable durably, then commit the
+manifest atomically (the commit point), then delete the input files. A crash
+before the manifest commit leaves the inputs live and the output an ignored
+orphan; a crash after it leaves the manifest naming the output, and the stale
+inputs become ignored orphans. Either way the on-disk state is consistent.
