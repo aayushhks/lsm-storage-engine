@@ -142,7 +142,8 @@ Status DBImpl::FlushMemTable() {
 
   // 1. build the sstable from the sorted memtable and write it durably.
   const std::uint64_t number = next_file_number_++;
-  SSTableBuilder builder;
+  constexpr std::size_t kFlushBlockSize = 4096;
+  SSTableBuilder builder(kFlushBlockSize, options_.bloom_fpr, options_.enable_bloom_filters);
   auto it = mem_->NewIterator();
   for (it.SeekToFirst(); it.Valid(); it.Next()) {
     builder.Add(it.key(), it.tag(), it.value());
