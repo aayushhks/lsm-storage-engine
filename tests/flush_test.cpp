@@ -32,6 +32,19 @@ class FlushTest : public ::testing::Test {
     return db;
   }
 
+  // Flush per write, and effectively disable background compaction so the table
+  // count is deterministic (the read-amp tests isolate the bloom filter's
+  // effect, not compaction's).
+  std::unique_ptr<lsm::DB> OpenOneTablePerWrite(bool enable_bloom) {
+    lsm::Options options;
+    options.memtable_flush_threshold_bytes = 1;
+    options.enable_bloom_filters = enable_bloom;
+    options.compaction_min_merge = 1'000'000;
+    std::unique_ptr<lsm::DB> db;
+    EXPECT_TRUE(lsm::DB::Open(options, dir_.string(), &db).ok());
+    return db;
+  }
+
   std::size_t CountSstFiles() const {
     std::size_t n = 0;
     for (const auto& entry : fs::directory_iterator(dir_)) {
@@ -137,7 +150,7 @@ TEST_F(FlushTest, OrphanSstableIgnoredAndWalRecovers) {
 // from all of them should read almost no data blocks; without, it reads one per
 // table. This is the measured before/after the design doc cites.
 TEST_F(FlushTest, BloomFiltersCutReadAmplificationForMisses) {
-  auto db = Open(1);  // one table per key
+  auto db = OpenOneTablePerWrite(/*enable_bloom=*/true);
   const int tables = 100;
   for (int i = 0; i < tables; ++i) {
     ASSERT_TRUE(db->Put("k" + std::to_string(i), "v").ok());
@@ -150,11 +163,7 @@ TEST_F(FlushTest, BloomFiltersCutReadAmplificationForMisses) {
 }
 
 TEST_F(FlushTest, WithoutBloomEveryTableIsProbedOnAMiss) {
-  lsm::Options options;
-  options.memtable_flush_threshold_bytes = 1;
-  options.enable_bloom_filters = false;
-  std::unique_ptr<lsm::DB> db;
-  ASSERT_TRUE(lsm::DB::Open(options, dir_.string(), &db).ok());
+  auto db = OpenOneTablePerWrite(/*enable_bloom=*/false);
   const int tables = 100;
   for (int i = 0; i < tables; ++i) {
     ASSERT_TRUE(db->Put("k" + std::to_string(i), "v").ok());
