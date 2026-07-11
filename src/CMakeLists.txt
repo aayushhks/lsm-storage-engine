@@ -3,6 +3,7 @@ add_library(lsm
   crc32.cpp
   coding.cpp
   file_util.cpp
+  bloom.cpp
   skiplist.cpp
   memtable.cpp
   wal.cpp
