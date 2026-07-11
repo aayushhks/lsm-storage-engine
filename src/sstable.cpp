@@ -187,6 +187,7 @@ Status SSTableReader::LoadIndex() {
   if (file_size < kFooterSize) {
     return Status::Corruption("sstable smaller than footer");
   }
+  file_size_ = file_size;
 
   std::string footer;
   Status s = PreadExact(fd_, file_size - kFooterSize, kFooterSize, &footer);
@@ -303,6 +304,53 @@ Status SSTableReader::Get(std::string_view key, std::string* value, GetResult* r
     }
   }
   return Status::Ok();  // not present in its block
+}
+
+Status SSTableReader::ReadDataBlock(std::size_t block, std::string* out) const {
+  const IndexEntry& entry = index_[block];
+  return PreadExact(fd_, entry.offset, entry.size, out);
+}
+
+SSTableIterator::SSTableIterator(std::shared_ptr<const SSTableReader> reader)
+    : reader_(std::move(reader)) {}
+
+void SSTableIterator::SeekToFirst() {
+  valid_ = false;
+  status_ = Status::Ok();
+  if (reader_->NumDataBlocks() == 0) {
+    return;
+  }
+  block_index_ = 0;
+  status_ = reader_->ReadDataBlock(0, &block_);
+  if (!status_.ok()) {
+    return;
+  }
+  cursor_ = block_;
+  Advance();
+}
+
+void SSTableIterator::Next() { Advance(); }
+
+void SSTableIterator::Advance() {
+  while (cursor_.empty()) {
+    if (block_index_ + 1 >= reader_->NumDataBlocks()) {
+      valid_ = false;
+      return;
+    }
+    ++block_index_;
+    status_ = reader_->ReadDataBlock(block_index_, &block_);
+    if (!status_.ok()) {
+      valid_ = false;
+      return;
+    }
+    cursor_ = block_;
+  }
+  if (!ParseEntry(&cursor_, &key_, &tag_, &value_)) {
+    status_ = Status::Corruption("sstable data block malformed during scan");
+    valid_ = false;
+    return;
+  }
+  valid_ = true;
 }
 
 }  // namespace lsm

@@ -73,6 +73,12 @@ class SSTableReader {
   // hit/miss/tombstone is reported through *result (and *value on a hit).
   Status Get(std::string_view key, std::string* value, GetResult* result) const;
 
+  // Ordered scan support, used by compaction. Reads are positioned (pread), so
+  // these are safe to call from a background thread while foreground lookups run.
+  std::size_t NumDataBlocks() const { return index_.size(); }
+  Status ReadDataBlock(std::size_t block, std::string* out) const;
+  std::uint64_t file_size() const { return file_size_; }
+
  private:
   struct IndexEntry {
     std::string first_key;
@@ -83,8 +89,39 @@ class SSTableReader {
   Status LoadIndex();
 
   int fd_;
+  std::uint64_t file_size_ = 0;
   std::vector<IndexEntry> index_;
   BloomFilter bloom_;
+};
+
+// Forward, ordered iterator over every entry in a table (values and tombstones
+// alike), used by the k-way merge in compaction. Holds the reader alive.
+class SSTableIterator {
+ public:
+  explicit SSTableIterator(std::shared_ptr<const SSTableReader> reader);
+
+  bool Valid() const { return valid_; }
+  const Status& status() const { return status_; }
+  void SeekToFirst();
+  void Next();
+
+  // Valid until the next call to Next(); callers copy what they keep.
+  std::string_view key() const { return key_; }
+  ValueTag tag() const { return tag_; }
+  std::string_view value() const { return value_; }
+
+ private:
+  void Advance();
+
+  std::shared_ptr<const SSTableReader> reader_;
+  std::size_t block_index_ = 0;
+  std::string block_;
+  std::string_view cursor_;
+  std::string_view key_;
+  std::string_view value_;
+  ValueTag tag_ = ValueTag::kValue;
+  bool valid_ = false;
+  Status status_;
 };
 
 }  // namespace lsm
