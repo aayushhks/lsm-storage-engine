@@ -563,3 +563,19 @@ The wall-clock gain (~19%) is smaller than the instruction drop (48%) because
 memset is memory-bandwidth bound and partly overlaps other work, and because the
 surviving read cost — comparisons, parsing, hashing — is real. That gap is itself
 the honest read: removing 48% of instructions bought ~19% of wall time, not 48%.
+
+## m9 — readme and framing
+
+The final milestone is presentation, not code: the README is rewritten as the
+project's front door — a one-paragraph description, a mermaid architecture
+diagram (write path, flush, read path, compaction), the build/run/bench
+instructions, the committed benchmark table and charts, the before/after
+profiling story, a condensed pull of the design decisions above, the honest
+limitations, and a "what I'd build next" section (group commit, range scans,
+leveled compaction, snapshot reads, async flush, orphan reclamation) framed as
+understood-but-descoped.
+
+The engine is feature-complete for its stated single-node scope. The limitations
+are real and listed, not hidden; the next-steps are the honest continuation, each
+with a one-line sketch of how it would be done. This document is the long-form
+record behind that README.
