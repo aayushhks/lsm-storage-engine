@@ -1,44 +1,95 @@
-// Placeholder benchmark entry point. The real workload harness
-// (fill-sequential, fill-random, read-random uniform/zipfian, mixed) lands in
-// m7. For now this is a build-and-run smoke so the bench target is held to the
-// same warnings and sanitizers as the engine from day one.
+// Benchmark harness for the lsm engine. Runs reproducible workloads through the
+// public api and reports ops/sec and p50/p95/p99 latencies, writing the results
+// (and the machine specs) to json. See docs/design.md (m7).
 
+#include <cstdint>
 #include <cstdio>
-#include <filesystem>
-#include <memory>
+#include <cstdlib>
 #include <string>
-#include <system_error>
+#include <vector>
 
-#include "lsm/db.h"
+#include "benchmark.h"
 
-int main() {
-  namespace fs = std::filesystem;
-  const fs::path dir = fs::temp_directory_path() / "lsm_bench_smoke";
-  std::error_code ec;
-  fs::remove_all(dir, ec);
+namespace {
 
-  const lsm::Options options;
-  std::unique_ptr<lsm::DB> db;
-  lsm::Status s = lsm::DB::Open(options, dir.string(), &db);
-  if (!s.ok()) {
-    std::fprintf(stderr, "open failed: %s\n", s.ToString().c_str());
+using lsm::bench::BenchConfig;
+
+// Parses "--name=value" style flags. Unknown flags are ignored.
+bool MatchFlag(const std::string& arg, const std::string& name, std::string* value) {
+  const std::string prefix = "--" + name + "=";
+  if (arg.rfind(prefix, 0) == 0) {
+    *value = arg.substr(prefix.size());
+    return true;
+  }
+  return false;
+}
+
+void PrintUsage() {
+  std::fprintf(stderr,
+               "usage: lsm_bench [--workload=NAME] [--num_ops=N] [--num_keys=N]\n"
+               "                 [--value_size=N] [--key_size=N] [--seed=N]\n"
+               "                 [--flush_threshold=BYTES] [--db_root=DIR] [--out=FILE]\n"
+               "workloads: fill-sequential fill-random read-random-uniform\n"
+               "           read-random-zipfian mixed  (default: full suite)\n");
+}
+
+void PrintTable(const std::vector<lsm::bench::RunResult>& results) {
+  std::printf("\n%-22s %12s %12s %10s %10s %10s\n", "workload", "ops", "ops/sec", "p50(us)",
+              "p95(us)", "p99(us)");
+  for (const lsm::bench::RunResult& r : results) {
+    std::printf("%-22s %12llu %12.0f %10.2f %10.2f %10.2f\n", r.workload.c_str(),
+                static_cast<unsigned long long>(r.num_ops), r.ops_per_sec, r.p50_us, r.p95_us,
+                r.p99_us);
+  }
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  BenchConfig config;
+  std::string workload;
+  std::string out_path;
+
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    std::string value;
+    if (MatchFlag(arg, "workload", &value)) {
+      workload = value;
+    } else if (MatchFlag(arg, "num_ops", &value)) {
+      config.num_ops = std::strtoull(value.c_str(), nullptr, 10);
+    } else if (MatchFlag(arg, "num_keys", &value)) {
+      config.num_keys = std::strtoull(value.c_str(), nullptr, 10);
+    } else if (MatchFlag(arg, "value_size", &value)) {
+      config.value_size = std::strtoull(value.c_str(), nullptr, 10);
+    } else if (MatchFlag(arg, "key_size", &value)) {
+      config.key_size = std::strtoull(value.c_str(), nullptr, 10);
+    } else if (MatchFlag(arg, "seed", &value)) {
+      config.seed = std::strtoull(value.c_str(), nullptr, 10);
+    } else if (MatchFlag(arg, "flush_threshold", &value)) {
+      config.flush_threshold_bytes = std::strtoull(value.c_str(), nullptr, 10);
+    } else if (MatchFlag(arg, "db_root", &value)) {
+      config.db_root = value;
+    } else if (MatchFlag(arg, "out", &value)) {
+      out_path = value;
+    } else {
+      PrintUsage();
+      return 1;
+    }
+  }
+
+  const std::vector<lsm::bench::RunResult> results =
+      workload.empty() ? lsm::bench::RunSuite(config)
+                       : lsm::bench::RunNamedWorkload(workload, config);
+  if (results.empty()) {
+    std::fprintf(stderr, "no results (unknown workload '%s')\n", workload.c_str());
+    PrintUsage();
     return 1;
   }
 
-  s = db->Put("hello", "world");
-  if (!s.ok()) {
-    std::fprintf(stderr, "put failed: %s\n", s.ToString().c_str());
-    return 1;
+  PrintTable(results);
+  if (!out_path.empty()) {
+    lsm::bench::WriteResultsJson(out_path, config, results);
+    std::fprintf(stderr, "\nwrote %s\n", out_path.c_str());
   }
-
-  std::string value;
-  s = db->Get("hello", &value);
-  if (!s.ok()) {
-    std::fprintf(stderr, "get failed: %s\n", s.ToString().c_str());
-    return 1;
-  }
-
-  std::printf("lsm bench smoke ok: hello -> %s\n", value.c_str());
-  fs::remove_all(dir, ec);
   return 0;
 }
