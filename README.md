@@ -21,7 +21,7 @@ made in [`docs/design.md`](docs/design.md).
 - [x] **m5** — read path + bloom filters: from-scratch bloom, ~1% fpr, cuts miss read-amp
 - [x] **m6** — background compaction: size-tiered, k-way merge, immutable-snapshot reads, tsan-clean
 - [x] **m7** — benchmark harness: reproducible workloads, ops/sec + p50/p95/p99, json + charts
-- [ ] m8 — profiling pass
+- [x] **m8** — profiling pass: found a 42% wasted memset on reads, fixed it, +19% read throughput
 - [ ] m9 — readme + framing
 
 ## build and test
@@ -81,20 +81,42 @@ values, 4 MiB flush threshold.
 
 | workload | ops/sec | p50 (µs) | p95 (µs) | p99 (µs) |
 |---|---:|---:|---:|---:|
-| fill-sequential | 1,440 | 647.20 | 1018.59 | 1367.30 |
-| fill-random | 1,422 | 649.32 | 1055.64 | 1427.08 |
-| read-random-uniform | 683,215 | 1.18 | 2.16 | 3.90 |
-| read-random-zipfian | 814,684 | 0.90 | 1.58 | 2.70 |
-| mixed-50-50 | 2,930 | 32.89 | 867.83 | 1105.70 |
+| fill-sequential | 1,556 | 595.57 | 937.54 | 1227.50 |
+| fill-random | 1,533 | 614.08 | 929.50 | 1190.85 |
+| read-random-uniform | 738,001 | 1.08 | 2.05 | 3.80 |
+| read-random-zipfian | 935,160 | 0.78 | 1.32 | 2.46 |
+| mixed-50-50 | 2,897 | 28.61 | 864.14 | 1726.27 |
 
 ![Throughput by workload](bench/results/ops_per_sec.png)
 ![Latency percentiles by workload](bench/results/latency.png)
 
 Reads run at hundreds of thousands of ops/sec with roughly single-microsecond
 p50 (memtable or one `pread`, bloom-filtered). Writes are **fsync-bound** at
-~1.4k ops/sec — every write flushes to disk before returning, so p50 is
-essentially one `fsync`. That is the honest bottleneck the profiling pass (M8)
-targets; group commit is the known remedy.
+~1.5k ops/sec — every write flushes to disk before returning, so p50 is
+essentially one `fsync`. Group commit (a listed next step) is the known remedy.
+
+### profiling (M8)
+
+Profiling the read path (valgrind/callgrind — this container has no `perf`; see
+[`bench/profiling/`](bench/profiling/README.md)) found one dominant hotspot:
+`SSTableReader::Get` allocated a fresh block buffer per lookup and `resize()`
+zero-filled ~4 KiB that `pread` then immediately overwrote — **42% of read-loop
+instructions spent on a `memset` that was thrown away**, plus ~6% of per-lookup
+`malloc`/`free`.
+
+The fix: a reused `thread_local` block buffer and a `PreadInto` that skips the
+zero-fill. Measured, same machine, before vs. after:
+
+- **instructions: read loop 394.5M → 205.7M (−48%)** — the memset vanishes.
+- **throughput (sstable-backed read-random): median ~896k → ~1.07M ops/sec
+  (+19%)**, with far less run-to-run jitter and p99 ~1.7µs → ~1.3µs.
+
+| before | after |
+|---|---|
+| ![before](bench/profiling/read_before.png) | ![after](bench/profiling/read_after.png) |
+
+The bright green `memset` branch on the left is gone on the right. The remaining
+read cost is genuine work — key comparison, block parsing, bloom probing.
 
 To reproduce:
 
