@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -17,9 +18,15 @@ namespace lsm {
 namespace {
 
 // Identifies the table format (and its version). The reader rejects any file
-// whose footer does not end with this value.
-constexpr std::uint64_t kMagic = 0x6C736D5F53535431ULL;  // "lsm_SST1"
-constexpr std::size_t kFooterSize = 24;  // index off u64 + index size u64 + magic u64
+// whose footer does not end with this value. Bumped from the m4 layout because
+// the footer now also carries the bloom block location.
+constexpr std::uint64_t kMagic = 0x6C736D5F53535432ULL;  // "lsm_SST2"
+constexpr std::size_t kFooterSize = 40;  // bloom off/size + index off/size + magic, all u64
+
+std::atomic<std::uint64_t>& DataBlockReadCounter() {
+  static std::atomic<std::uint64_t> counter{0};
+  return counter;
+}
 
 Status PosixError(const std::string& context) {
   const std::error_code ec(errno, std::generic_category());
@@ -88,7 +95,11 @@ bool ParseEntry(std::string_view* cursor, std::string_view* key, ValueTag* tag,
 
 }  // namespace
 
-SSTableBuilder::SSTableBuilder(std::size_t block_size) : block_size_(block_size) {}
+std::uint64_t SSTableDataBlockReads() { return DataBlockReadCounter().load(); }
+void ResetSSTableDataBlockReads() { DataBlockReadCounter().store(0); }
+
+SSTableBuilder::SSTableBuilder(std::size_t block_size, double bloom_fpr, bool enable_bloom)
+    : block_size_(block_size), bloom_fpr_(bloom_fpr), enable_bloom_(enable_bloom) {}
 
 void SSTableBuilder::Add(std::string_view key, ValueTag tag, std::string_view value) {
   if (block_.empty()) {
@@ -99,6 +110,9 @@ void SSTableBuilder::Add(std::string_view key, ValueTag tag, std::string_view va
   block_.push_back(static_cast<char>(static_cast<std::uint8_t>(tag)));
   PutFixed32(&block_, static_cast<std::uint32_t>(value.size()));
   block_.append(value);
+  if (enable_bloom_) {
+    bloom_hashes_.push_back(BloomHash(key));
+  }
   ++num_entries_;
   if (block_.size() >= block_size_) {
     FlushBlock();
@@ -125,6 +139,15 @@ std::string SSTableBuilder::Finish() {
   const std::uint64_t index_offset = file_.size();
   file_.append(index_);
   const std::uint64_t index_size = file_.size() - index_offset;
+
+  const std::uint64_t bloom_offset = file_.size();
+  if (enable_bloom_) {
+    file_.append(BuildBloomFilter(bloom_hashes_, bloom_fpr_));
+  }
+  const std::uint64_t bloom_size = file_.size() - bloom_offset;
+
+  PutFixed64(&file_, bloom_offset);
+  PutFixed64(&file_, bloom_size);
   PutFixed64(&file_, index_offset);
   PutFixed64(&file_, index_size);
   PutFixed64(&file_, kMagic);
@@ -171,14 +194,26 @@ Status SSTableReader::LoadIndex() {
     return s;
   }
   const std::string_view fv(footer);
-  const std::uint64_t index_offset = DecodeFixed64(fv);
-  const std::uint64_t index_size = DecodeFixed64(fv.substr(8));
-  const std::uint64_t magic = DecodeFixed64(fv.substr(16));
+  const std::uint64_t bloom_offset = DecodeFixed64(fv);
+  const std::uint64_t bloom_size = DecodeFixed64(fv.substr(8));
+  const std::uint64_t index_offset = DecodeFixed64(fv.substr(16));
+  const std::uint64_t index_size = DecodeFixed64(fv.substr(24));
+  const std::uint64_t magic = DecodeFixed64(fv.substr(32));
   if (magic != kMagic) {
     return Status::Corruption("sstable bad magic");
   }
-  if (index_offset + index_size + kFooterSize > file_size) {
+  if (index_offset + index_size + kFooterSize > file_size ||
+      bloom_offset + bloom_size + kFooterSize > file_size) {
     return Status::Corruption("sstable footer offsets out of range");
+  }
+
+  if (bloom_size > 0) {
+    std::string bloom_bytes;
+    s = PreadExact(fd_, bloom_offset, bloom_size, &bloom_bytes);
+    if (!s.ok()) {
+      return s;
+    }
+    bloom_ = BloomFilter(std::move(bloom_bytes));
   }
 
   std::string index_bytes;
@@ -215,6 +250,12 @@ Status SSTableReader::Get(std::string_view key, std::string* value, GetResult* r
     return Status::Ok();
   }
 
+  // The bloom filter answers "definitely absent" without touching the disk; a
+  // false positive here only costs one wasted block read below.
+  if (!bloom_.MayContain(key)) {
+    return Status::Ok();
+  }
+
   // Binary search for the last block whose first key is <= the target: that is
   // the only block that can contain the key (the sparse index guarantees every
   // key in block i falls in [first_key_i, first_key_{i+1})).
@@ -234,6 +275,7 @@ Status SSTableReader::Get(std::string_view key, std::string* value, GetResult* r
   const IndexEntry& block_ref = index_[lo - 1];
 
   std::string block;
+  DataBlockReadCounter().fetch_add(1);
   Status s = PreadExact(fd_, block_ref.offset, block_ref.size, &block);
   if (!s.ok()) {
     return s;

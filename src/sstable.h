@@ -7,20 +7,29 @@
 #include <string_view>
 #include <vector>
 
+#include "bloom.h"
 #include "lsm/db.h"
 #include "skiplist.h"  // ValueTag
 
 namespace lsm {
 
+// Process-wide count of sstable data blocks read from disk, a proxy for read
+// amplification. Tests and benchmarks use it to show the effect of the bloom
+// filters. Not reset automatically.
+std::uint64_t SSTableDataBlockReads();
+void ResetSSTableDataBlockReads();
+
 // Builds an immutable sorted table in memory. Keys must be added in ascending
 // order (the memtable iterator provides exactly that). Layout:
-//   [data block 0][data block 1]...[index block][footer]
+//   [data block 0][data block 1]...[index block][bloom block][footer]
 // A data block is a run of entries: [keylen u32][key][tag u8][vallen u32][value].
 // The sparse index has one entry per block: [keylen u32][first key][offset u64][size u32].
-// The fixed 24-byte footer is [index offset u64][index size u64][magic u64].
+// The bloom block is a serialized filter over every key. The fixed 40-byte footer
+// is [bloom offset u64][bloom size u64][index offset u64][index size u64][magic u64].
 class SSTableBuilder {
  public:
-  explicit SSTableBuilder(std::size_t block_size = 4096);
+  explicit SSTableBuilder(std::size_t block_size = 4096, double bloom_fpr = 0.01,
+                          bool enable_bloom = true);
 
   // Appends one entry. Callers add keys in ascending order.
   void Add(std::string_view key, ValueTag tag, std::string_view value);
@@ -34,10 +43,13 @@ class SSTableBuilder {
   void FlushBlock();
 
   std::size_t block_size_;
-  std::string file_;         // assembled table bytes
-  std::string block_;        // current in-progress data block
-  std::string block_first_;  // first key of the current block
-  std::string index_;        // assembled index-entry bytes
+  double bloom_fpr_;
+  bool enable_bloom_;
+  std::string file_;                         // assembled table bytes
+  std::string block_;                        // current in-progress data block
+  std::string block_first_;                  // first key of the current block
+  std::string index_;                        // assembled index-entry bytes
+  std::vector<std::uint64_t> bloom_hashes_;  // one hash per key, for the filter
   std::size_t num_entries_ = 0;
 };
 
@@ -72,6 +84,7 @@ class SSTableReader {
 
   int fd_;
   std::vector<IndexEntry> index_;
+  BloomFilter bloom_;
 };
 
 }  // namespace lsm
