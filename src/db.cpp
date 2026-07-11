@@ -38,7 +38,7 @@ Status DB::Open(const Options& options, const std::string& dir, std::unique_ptr<
     return Status::InvalidArgument("path exists and is not a directory: " + dir);
   }
 
-  auto impl = std::make_unique<DBImpl>(dir);
+  auto impl = std::make_unique<DBImpl>(options, dir);
   Status recovered = impl->Recover();
   if (!recovered.ok()) {
     return recovered;
