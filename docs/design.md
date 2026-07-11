@@ -448,3 +448,52 @@ manifest atomically (the commit point), then delete the input files. A crash
 before the manifest commit leaves the inputs live and the output an ignored
 orphan; a crash after it leaves the manifest naming the output, and the stale
 inputs become ignored orphans. Either way the on-disk state is consistent.
+
+## m7 — benchmark harness
+
+### scope
+
+A `bench` cli that drives the engine through reproducible workloads and reports
+throughput and tail latency, writing raw results to json. A python script renders
+the json into the README's table and charts. All numbers come from a single run
+on stated hardware, and that run's json is committed — no cherry-picking.
+
+### workloads and method
+
+Five workloads, all through the public api:
+
+- **fill-sequential** — put keys in ascending order (sorted inserts).
+- **fill-random** — put the same keys in shuffled order.
+- **read-random-uniform** — get keys drawn uniformly from a pre-filled set.
+- **read-random-zipfian** — get keys drawn from a zipfian distribution (skew
+  0.99), so a small hot set dominates — the realistic skewed-access case.
+- **mixed-50-50** — an even split of gets and puts over the pre-filled set.
+
+Keys are the decimal index zero-padded to a fixed width (so fill-sequential is
+genuinely sorted); values are fixed-size filler. Everything is seeded, so a run
+reproduces. Each operation is timed individually with `steady_clock`; latencies
+are collected, sorted, and reported as p50/p95/p99, and throughput is the op
+count over the wall-clock span of the measured loop. The zipfian sampler uses a
+precomputed cumulative distribution with a binary-search draw. The read and mixed
+workloads share one populated database so the (expensive, fsync-bound) fill runs
+only once.
+
+### what the numbers say
+
+The committed run is in `bench/results/results.json`, rendered into the README.
+The shape of the result is the important part and it is honest about the design:
+
+- **Reads are fast** — several hundred thousand ops/sec (~680k–815k on the
+  committed run) at roughly single-microsecond p50, because a hit is served from
+  the in-memory memtable or from an sstable via one `pread`, with the bloom
+  filter skipping tables that cannot hold the key.
+- **Writes are slow** — roughly 1.4k ops/sec, because every write does an
+  `fsync` before returning (m3's fsync-per-write durability). The ~650µs p50
+  write latency is essentially one disk flush. This is the dominant write-path
+  cost and exactly what the m8 profiling pass examines; group commit (stretch
+  goal) is the known remedy, and its absence is why the number is what it is.
+- **Mixed throughput** sits near the write path's, because the fsync on the write
+  half dominates the cheap reads.
+
+Reporting the fsync-bound write number rather than hiding it is the point: the
+benchmark exists to find the real bottleneck, not to flatter the engine.
