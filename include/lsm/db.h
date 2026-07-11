@@ -47,12 +47,20 @@ class Status {
   std::string message_;
 };
 
-// Tunables. Grows milestone by milestone (bloom fpr, compaction fan-in, ...).
+// Tunables. Grows milestone by milestone (compaction fan-in, ...).
 struct Options {
   bool create_if_missing = true;
 
   // Memtable size at which a flush is triggered. Consumed from m4 onward.
   std::size_t memtable_flush_threshold_bytes = 4U << 20;  // 4 MiB
+
+  // Target false-positive rate for the per-sstable bloom filters. Smaller means
+  // fewer wasted block reads on a miss at the cost of a larger filter.
+  double bloom_fpr = 0.01;
+
+  // Build a bloom filter into each sstable. Disable to measure the read-path
+  // cost without it.
+  bool enable_bloom_filters = true;
 };
 
 // Single-node key-value store. Keys and values are arbitrary byte strings
