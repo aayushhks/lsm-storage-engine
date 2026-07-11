@@ -9,6 +9,8 @@ add_executable(lsm_tests
   manifest_test.cpp
   flush_test.cpp
   bloom_test.cpp
+  compaction_test.cpp
+  stress_test.cpp
 )
 
 # tests reach into internal headers (skiplist, memtable, wal, sstable, ...) in src/.
