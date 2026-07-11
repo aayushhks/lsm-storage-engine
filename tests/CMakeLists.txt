@@ -5,9 +5,12 @@ add_executable(lsm_tests
   crc32_test.cpp
   wal_test.cpp
   recovery_test.cpp
+  sstable_test.cpp
+  manifest_test.cpp
+  flush_test.cpp
 )
 
-# tests reach into internal headers (skiplist, memtable, wal, ...) that live in src/.
+# tests reach into internal headers (skiplist, memtable, wal, sstable, ...) in src/.
 target_include_directories(lsm_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(lsm_tests PRIVATE lsm lsm_warnings GTest::gtest_main)
 
