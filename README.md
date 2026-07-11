@@ -19,7 +19,7 @@ made in [`docs/design.md`](docs/design.md).
 - [x] **m3** — write-ahead log + recovery: crc32 framing, fsync-per-write, tail truncation
 - [x] **m4** — sstable flush + manifest: sparse-index tables, atomic manifest, wal rotation
 - [x] **m5** — read path + bloom filters: from-scratch bloom, ~1% fpr, cuts miss read-amp
-- [ ] m6 — background compaction
+- [x] **m6** — background compaction: size-tiered, k-way merge, immutable-snapshot reads, tsan-clean
 - [ ] m7 — benchmark harness
 - [ ] m8 — profiling pass
 - [ ] m9 — readme + framing
