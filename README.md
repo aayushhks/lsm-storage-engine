@@ -20,7 +20,7 @@ made in [`docs/design.md`](docs/design.md).
 - [x] **m4** — sstable flush + manifest: sparse-index tables, atomic manifest, wal rotation
 - [x] **m5** — read path + bloom filters: from-scratch bloom, ~1% fpr, cuts miss read-amp
 - [x] **m6** — background compaction: size-tiered, k-way merge, immutable-snapshot reads, tsan-clean
-- [ ] m7 — benchmark harness
+- [x] **m7** — benchmark harness: reproducible workloads, ops/sec + p50/p95/p99, json + charts
 - [ ] m8 — profiling pass
 - [ ] m9 — readme + framing
 
@@ -67,6 +67,42 @@ if (db->Get("key", &value).ok()) {
 
 db->Delete("key");
 db->Close();  // also happens on destruction
+```
+
+## benchmarks
+
+Numbers from a single run of the `bench` harness on the stated hardware — no
+cherry-picking; the raw JSON is committed at [`bench/results/results.json`](bench/results/results.json)
+and the charts are regenerated from it by `bench/plot_results.py`.
+
+Hardware: **Intel Xeon @ 2.10 GHz, 4 cores, 16 GB RAM, Ubuntu 24.04 (ext4)**.
+Config: 50,000 ops per workload, 100,000-key read set, 16-byte keys, 100-byte
+values, 4 MiB flush threshold.
+
+| workload | ops/sec | p50 (µs) | p95 (µs) | p99 (µs) |
+|---|---:|---:|---:|---:|
+| fill-sequential | 1,440 | 647.20 | 1018.59 | 1367.30 |
+| fill-random | 1,422 | 649.32 | 1055.64 | 1427.08 |
+| read-random-uniform | 683,215 | 1.18 | 2.16 | 3.90 |
+| read-random-zipfian | 814,684 | 0.90 | 1.58 | 2.70 |
+| mixed-50-50 | 2,930 | 32.89 | 867.83 | 1105.70 |
+
+![Throughput by workload](bench/results/ops_per_sec.png)
+![Latency percentiles by workload](bench/results/latency.png)
+
+Reads run at hundreds of thousands of ops/sec with roughly single-microsecond
+p50 (memtable or one `pread`, bloom-filtered). Writes are **fsync-bound** at
+~1.4k ops/sec — every write flushes to disk before returning, so p50 is
+essentially one `fsync`. That is the honest bottleneck the profiling pass (M8)
+targets; group commit is the known remedy.
+
+To reproduce:
+
+```sh
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release
+./build-release/bench/lsm_bench --out=bench/results/results.json
+python3 bench/plot_results.py bench/results/results.json
 ```
 
 ## limitations
