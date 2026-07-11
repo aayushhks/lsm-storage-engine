@@ -497,3 +497,69 @@ The shape of the result is the important part and it is honest about the design:
 
 Reporting the fsync-bound write number rather than hiding it is the point: the
 benchmark exists to find the real bottleneck, not to flatter the engine.
+
+## m8 — profiling pass
+
+### tooling (and an honest caveat)
+
+The reference platform for profiling is `perf record` / `perf stat` with
+flamegraphs. This project's ci container has **no `perf`** (no binary,
+`perf_event_paranoid=2`, and a host kernel the distro's `linux-tools` do not
+match), so profiling here uses **valgrind/callgrind** — deterministic,
+instruction-level cpu profiling that needs no kernel perf access — visualized as
+gprof2dot call-graphs (`bench/profiling/read_before.png`, `read_after.png`). The
+numbers below are callgrind instruction counts plus wall-clock benchmark runs.
+The equivalent perf recipe, for a perf-capable host, is recorded in
+`bench/profiling/README.md` so the same pass reproduces as flamegraphs there.
+
+### the write path: fsync, off-cpu
+
+Profiling the write path with a cpu profiler is the wrong instrument, and that
+itself is the finding: a write's cost is the `fsync` (m3), which blocks *off*
+cpu waiting on the disk. A cpu profile shows only the small on-cpu remainder
+(wal framing, crc, the memtable insert). The write bottleneck is durability
+latency, not cpu work, and the fix is group commit (stretch goal) — not a
+code hotspot to chase. So the profiling effort went to the read path, which is
+cpu-bound.
+
+### the read path: a 42% memset that pread immediately overwrites
+
+Callgrind on the sstable-backed read path found one dominant hotspot:
+**`__memset_avx2_unaligned_erms` at 42%** of read-loop instructions. It came from
+`SSTableReader::Get`: each lookup allocated a fresh `std::string` for the data
+block and `resize()`d it to the block size, which **zero-fills ~4 KiB** — bytes
+that the very next `pread` overwrites. So two out of every five instructions on
+the read path were zeroing a buffer that was about to be clobbered, plus ~6% more
+in the per-lookup `malloc`/`free`.
+
+### the fix
+
+A per-thread reused block buffer plus a read that skips the zero-fill:
+
+- `Get` now reads into a `thread_local std::string`, reused across lookups, so
+  there is no per-lookup allocation. `thread_local` keeps it correct under the
+  concurrent read path (each thread has its own; tsan-clean).
+- A new `PreadInto` reads `length` bytes into an already-sized buffer without the
+  resize zero-fill (`pread` provides the bytes). The buffer only grows — and only
+  then zero-fills — when a block larger than any seen so far appears, which after
+  warmup effectively never happens. The old `PreadExact` (resize + read) stays
+  for the compaction scan path, which is not latency-critical.
+
+### measured gain
+
+Same machine, controlled before/after:
+
+- **Instructions (callgrind, deterministic): read loop 394.5M → 205.7M, a 48%
+  reduction.** The memset disappears from the profile entirely; the after-profile
+  is dominated by genuine work — key `memcmp`, block `ParseEntry`, and bloom
+  probing.
+- **Throughput (wall clock, read-random-uniform, sstable-backed): median ~896k →
+  ~1.07M ops/sec, ~+19%**, and markedly more consistent — the before run swung
+  733k–998k, the after held 1.03M–1.07M, because the eliminated allocation and
+  zeroing were also the main source of run-to-run jitter. p99 read latency
+  improved ~1.7µs → ~1.3µs.
+
+The wall-clock gain (~19%) is smaller than the instruction drop (48%) because
+memset is memory-bandwidth bound and partly overlaps other work, and because the
+surviving read cost — comparisons, parsing, hashing — is real. That gap is itself
+the honest read: removing 48% of instructions bought ~19% of wall time, not 48%.
