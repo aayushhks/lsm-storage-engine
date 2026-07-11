@@ -289,3 +289,68 @@ That caps transient memory at roughly the flush threshold (a few MiB by default)
 and keeps the builder trivial to unit-test as a pure function of its inputs. A
 streaming builder that writes blocks as it goes would remove that transient, and
 is a reasonable later change; at the current scope the simplicity is worth more.
+
+## m5 — read path and bloom filters
+
+### scope
+
+The multi-table read path (memtable, then sstables newest-to-oldest) already
+exists from m4. m5 adds a per-sstable bloom filter, built at flush and stored in
+the table, so a lookup can skip a table that definitely lacks the key without
+reading any of its blocks. The bloom filter and its hashing are implemented from
+scratch.
+
+### bloom filter design
+
+A bloom filter is a bit array of *m* bits with *k* hash functions. To insert a
+key, set the *k* bits it hashes to; to test a key, check those *k* bits — if any
+is clear the key is definitely absent, and if all are set the key is *probably*
+present. There are no false negatives (a stored key never reads back absent),
+only false positives, at a tunable rate.
+
+- **Hashing.** One 64-bit hash per key (fnv-1a, hand-written), split into two
+  32-bit halves `h1` and `h2`. The *k* probe positions come from double hashing —
+  `g_i = h1 + i * h2 (mod m)` — the Kirsch–Mitzenmacher construction. It gives
+  *k* well-distributed positions from a single hash rather than computing *k*
+  independent hashes, which is both the standard technique and cheaper.
+- **Sizing (fpr is the build parameter).** From a target false-positive rate *p*
+  the optimal bits-per-key is `m/n = -ln p / (ln 2)^2` and the optimal probe
+  count is `k = (m/n) · ln 2`. For the default `p = 0.01` that is ~9.6 bits/key
+  and `k = 7`. `k` is clamped to `[1, 30]` and stored in a one-byte header so the
+  reader knows how many probes to make; the bit-array length gives *m*.
+
+### bits/key vs. fpr
+
+The achieved false-positive rate is `(1 - e^{-kn/m})^k`. More bits per key means
+a lower rate, with diminishing returns:
+
+| bits/key | optimal k | theoretical fpr |
+|---------:|----------:|----------------:|
+| 5        | 3         | ~9.2%           |
+| 10       | 7         | ~1.0%           |
+| 15       | 10        | ~0.06%          |
+| 20       | 14        | ~0.006%         |
+
+Measured on this implementation at the default `p = 0.01` (n = 10,000 keys,
+100,000 negative probes): **9.59 bits/key, k = 7, theoretical 1.00%, empirical
+1.08%** — within noise of theory, and the `EmpiricalFalsePositiveRateMatchesTheory`
+test asserts the measured rate stays within 2× of the theoretical value with no
+false negatives.
+
+### read amplification, before vs. after
+
+Without bloom filters a point lookup that misses must consult every sstable that
+could contain the key: binary-search its index and read one data block, so a miss
+costs one block read *per table*. With a filter per table, a miss reads a block
+only from tables where the filter returns a (true or false) positive — a fraction
+`p` of them on average. The `sstable data blocks read` counter makes this
+concrete. Across **100 single-key sstables**, looking up a key present in none:
+
+- **without bloom filters: 100 data-block reads** (one per table);
+- **with bloom filters (p = 0.01): ~1** (bounded to `< 10` by the test).
+
+That is the whole point of the filter: it converts the miss path from O(number
+of tables) block reads into O(number of tables · fpr), which matters more as
+tables accumulate before compaction (m6). The cost is the filter's space (~9.6
+bits per key at the default rate) and one in-memory bit-probe per table on the
+read path.
