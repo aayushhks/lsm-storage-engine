@@ -18,7 +18,7 @@ made in [`docs/design.md`](docs/design.md).
 - [x] **m2** — skip-list memtable: ordered store, tombstones, memory accounting
 - [x] **m3** — write-ahead log + recovery: crc32 framing, fsync-per-write, tail truncation
 - [x] **m4** — sstable flush + manifest: sparse-index tables, atomic manifest, wal rotation
-- [ ] m5 — read path + bloom filters
+- [x] **m5** — read path + bloom filters: from-scratch bloom, ~1% fpr, cuts miss read-amp
 - [ ] m6 — background compaction
 - [ ] m7 — benchmark harness
 - [ ] m8 — profiling pass
