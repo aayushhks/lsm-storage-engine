@@ -1,13 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
 
 #include "lsm/db.h"
-#include "sstable.h"  // build an orphan sstable directly
+#include "sstable.h"  // build an orphan sstable directly, read the block-read counter
 
 namespace {
 
@@ -130,6 +131,39 @@ TEST_F(FlushTest, OrphanSstableIgnoredAndWalRecovers) {
   EXPECT_EQ(v, "2");
   ASSERT_TRUE(db->Get("c", &v).ok());
   EXPECT_EQ(v, "3");
+}
+
+// Read amplification for a miss: with a bloom filter per table, a key absent
+// from all of them should read almost no data blocks; without, it reads one per
+// table. This is the measured before/after the design doc cites.
+TEST_F(FlushTest, BloomFiltersCutReadAmplificationForMisses) {
+  auto db = Open(1);  // one table per key
+  const int tables = 100;
+  for (int i = 0; i < tables; ++i) {
+    ASSERT_TRUE(db->Put("k" + std::to_string(i), "v").ok());
+  }
+  lsm::ResetSSTableDataBlockReads();
+  std::string v;
+  EXPECT_TRUE(db->Get("totally-absent", &v).IsNotFound());
+  const std::uint64_t with_bloom = lsm::SSTableDataBlockReads();
+  EXPECT_LT(with_bloom, 10U);  // blooms skip almost every table
+}
+
+TEST_F(FlushTest, WithoutBloomEveryTableIsProbedOnAMiss) {
+  lsm::Options options;
+  options.memtable_flush_threshold_bytes = 1;
+  options.enable_bloom_filters = false;
+  std::unique_ptr<lsm::DB> db;
+  ASSERT_TRUE(lsm::DB::Open(options, dir_.string(), &db).ok());
+  const int tables = 100;
+  for (int i = 0; i < tables; ++i) {
+    ASSERT_TRUE(db->Put("k" + std::to_string(i), "v").ok());
+  }
+  lsm::ResetSSTableDataBlockReads();
+  std::string v;
+  EXPECT_TRUE(db->Get("totally-absent", &v).IsNotFound());
+  const std::uint64_t without_bloom = lsm::SSTableDataBlockReads();
+  EXPECT_EQ(without_bloom, static_cast<std::uint64_t>(tables));  // one block read per table
 }
 
 }  // namespace
