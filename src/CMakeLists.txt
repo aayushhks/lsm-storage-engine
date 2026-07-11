@@ -9,9 +9,12 @@ add_library(lsm
   wal.cpp
   sstable.cpp
   manifest.cpp
+  compaction.cpp
   db.cpp
   db_impl.cpp
 )
 
+find_package(Threads REQUIRED)
+
 target_include_directories(lsm PUBLIC ${CMAKE_SOURCE_DIR}/include)
-target_link_libraries(lsm PRIVATE lsm_warnings)
+target_link_libraries(lsm PRIVATE lsm_warnings PUBLIC Threads::Threads)
