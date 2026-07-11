@@ -61,6 +61,10 @@ struct Options {
   // Build a bloom filter into each sstable. Disable to measure the read-path
   // cost without it.
   bool enable_bloom_filters = true;
+
+  // Size-tiered compaction merges a run of similarly sized sstables once this
+  // many accumulate in a tier. Also the size ratio between adjacent tiers.
+  std::size_t compaction_min_merge = 4;
 };
 
 // Single-node key-value store. Keys and values are arbitrary byte strings
