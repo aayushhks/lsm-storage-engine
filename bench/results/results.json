@@ -1,0 +1,64 @@
+{
+  "machine": {
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "mem_total": "16461176 kB",
+    "os": "Ubuntu 24.04.4 LTS"
+  },
+  "config": {
+    "num_ops": 50000,
+    "num_keys": 100000,
+    "key_size": 16,
+    "value_size": 100,
+    "flush_threshold_bytes": 4194304,
+    "zipfian_skew": 0.99,
+    "seed": 42
+  },
+  "results": [
+    {
+      "workload": "fill-sequential",
+      "num_ops": 50000,
+      "seconds": 34.7212,
+      "ops_per_sec": 1440.04,
+      "p50_us": 647.2,
+      "p95_us": 1018.59,
+      "p99_us": 1367.3
+    },
+    {
+      "workload": "fill-random",
+      "num_ops": 50000,
+      "seconds": 35.1725,
+      "ops_per_sec": 1421.57,
+      "p50_us": 649.315,
+      "p95_us": 1055.64,
+      "p99_us": 1427.08
+    },
+    {
+      "workload": "read-random-uniform",
+      "num_ops": 50000,
+      "seconds": 0.0731834,
+      "ops_per_sec": 683215,
+      "p50_us": 1.177,
+      "p95_us": 2.162,
+      "p99_us": 3.903
+    },
+    {
+      "workload": "read-random-zipfian",
+      "num_ops": 50000,
+      "seconds": 0.0613735,
+      "ops_per_sec": 814684,
+      "p50_us": 0.9,
+      "p95_us": 1.578,
+      "p99_us": 2.699
+    },
+    {
+      "workload": "mixed-50-50",
+      "num_ops": 50000,
+      "seconds": 17.0628,
+      "ops_per_sec": 2930.36,
+      "p50_us": 32.891,
+      "p95_us": 867.827,
+      "p99_us": 1105.7
+    }
+  ]
+}
