@@ -33,9 +33,11 @@ Status PosixError(const std::string& context) {
   return Status::IOError(context + ": " + ec.message());
 }
 
-// Reads exactly length bytes from fd starting at offset into *out.
-Status PreadExact(int fd, std::uint64_t offset, std::size_t length, std::string* out) {
-  out->resize(length);
+// Reads exactly length bytes from fd at offset into the first length bytes of
+// *out. Precondition: out->size() >= length. Unlike a resize-then-read, this
+// does not zero-fill the buffer first (pread overwrites it anyway), which is the
+// dominant cost on the read path when the buffer is reused.
+Status PreadInto(int fd, std::uint64_t offset, std::size_t length, std::string* out) {
   std::size_t done = 0;
   while (done < length) {
     const ssize_t n = ::pread(fd, &(*out)[done], length - done, static_cast<off_t>(offset + done));
@@ -51,6 +53,12 @@ Status PreadExact(int fd, std::uint64_t offset, std::size_t length, std::string*
     done += static_cast<std::size_t>(n);
   }
   return Status::Ok();
+}
+
+// Convenience for callers that want a freshly sized buffer (compaction scans).
+Status PreadExact(int fd, std::uint64_t offset, std::size_t length, std::string* out) {
+  out->resize(length);
+  return PreadInto(fd, offset, length, out);
 }
 
 // Parses one data-block entry from *cursor, advancing it. Returns false if the
@@ -275,14 +283,20 @@ Status SSTableReader::Get(std::string_view key, std::string* value, GetResult* r
   }
   const IndexEntry& block_ref = index_[lo - 1];
 
-  std::string block;
   DataBlockReadCounter().fetch_add(1);
-  Status s = PreadExact(fd_, block_ref.offset, block_ref.size, &block);
+  // Reuse a per-thread buffer: one lookup per thread reads into the same
+  // storage, avoiding a per-lookup allocation and the resize zero-fill. It only
+  // grows (and zero-fills) when a larger block than any seen so far appears.
+  thread_local std::string block;
+  if (block.size() < block_ref.size) {
+    block.resize(block_ref.size);
+  }
+  Status s = PreadInto(fd_, block_ref.offset, block_ref.size, &block);
   if (!s.ok()) {
     return s;
   }
 
-  std::string_view cursor(block);
+  std::string_view cursor(block.data(), block_ref.size);
   while (!cursor.empty()) {
     std::string_view entry_key;
     ValueTag tag = ValueTag::kValue;
