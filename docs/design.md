@@ -522,14 +522,14 @@ latency, not cpu work, and the fix is group commit (stretch goal) — not a
 code hotspot to chase. So the profiling effort went to the read path, which is
 cpu-bound.
 
-### the read path: a 42% memset that pread immediately overwrites
+### the read path: a 45% memset that pread immediately overwrites
 
 Callgrind on the sstable-backed read path found one dominant hotspot:
-**`__memset_avx2_unaligned_erms` at 42%** of read-loop instructions. It came from
+**`__memset_avx2_unaligned_erms` at 44.7%** of read-loop instructions. It came from
 `SSTableReader::Get`: each lookup allocated a fresh `std::string` for the data
 block and `resize()`d it to the block size, which **zero-fills ~4 KiB** — bytes
-that the very next `pread` overwrites. So two out of every five instructions on
-the read path were zeroing a buffer that was about to be clobbered, plus ~6% more
+that the very next `pread` overwrites. So nearly half of all instructions on
+the read path were zeroing a buffer that was about to be clobbered, plus more
 in the per-lookup `malloc`/`free`.
 
 ### the fix
@@ -547,22 +547,29 @@ A per-thread reused block buffer plus a read that skips the zero-fill:
 
 ### measured gain
 
-Same machine, controlled before/after:
+A controlled A/B on one machine: two builds of the same tree differing only in
+`src/sstable.cpp`, driven by the same harness.
 
-- **Instructions (callgrind, deterministic): read loop 394.5M → 205.7M, a 48%
-  reduction.** The memset disappears from the profile entirely; the after-profile
-  is dominated by genuine work — key `memcmp`, block `ParseEntry`, and bloom
-  probing.
-- **Throughput (wall clock, read-random-uniform, sstable-backed): median ~896k →
-  ~1.07M ops/sec, ~+19%**, and markedly more consistent — the before run swung
-  733k–998k, the after held 1.03M–1.07M, because the eliminated allocation and
-  zeroing were also the main source of run-to-run jitter. p99 read latency
-  improved ~1.7µs → ~1.3µs.
+- **Instructions (callgrind, deterministic): read loop 372.6M → 182.1M, a 51%
+  reduction.** Callgrind counts instructions rather than sampling time, so this
+  reproduces exactly on any machine — it is the number worth quoting.
+- The composition corroborates it: `__memset_avx2` falls from 166.5M (44.7%) to
+  1.2M (0.7%), and malloc/free traffic from ~21.5M to ~5.1M — while
+  `ParseEntry` (41.6M) and `__memcmp_avx2` (35.6M) are **unchanged in absolute
+  terms**. Only overhead disappeared; the real work is untouched, which is the
+  check that distinguishes an optimization from a benchmark that quietly stopped
+  doing the work.
+- **Throughput (wall clock, read-random-uniform): median of 5 trials 620,018 →
+  710,090 ops/sec, +14.5%**, p50 1.35µs → 1.14µs. The trial ranges overlap
+  (574.7k–713.6k before, 634.4k–802.3k after), so the wall-clock gain is real but
+  noisy on a shared vCPU.
 
-The wall-clock gain (~19%) is smaller than the instruction drop (48%) because
+The wall-clock gain (~14%) is smaller than the instruction drop (51%) because
 memset is memory-bandwidth bound and partly overlaps other work, and because the
 surviving read cost — comparisons, parsing, hashing — is real. That gap is itself
-the honest read: removing 48% of instructions bought ~19% of wall time, not 48%.
+the honest read: removing half the instructions bought ~14% of wall time, not
+half. Where the two measurements disagree in precision, the deterministic one is
+the one to report.
 
 ## m9 — readme and framing
 
