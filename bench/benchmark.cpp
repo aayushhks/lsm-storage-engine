@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -47,7 +48,31 @@ RunResult Summarize(const std::string& name, std::vector<double> latencies_us, d
   result.p50_us = Percentile(latencies_us, 0.50);
   result.p95_us = Percentile(latencies_us, 0.95);
   result.p99_us = Percentile(latencies_us, 0.99);
+  result.p999_us = Percentile(latencies_us, 0.999);
+  result.max_us = latencies_us.empty() ? 0.0 : latencies_us.back();
+  result.ops_per_sec_min = result.ops_per_sec;
+  result.ops_per_sec_max = result.ops_per_sec;
   return result;
+}
+
+// Runs one workload config.trials times and returns the median trial by
+// throughput, annotated with the spread across trials. Reporting the median of
+// several runs rather than a single run keeps one lucky run from setting the
+// headline number.
+RunResult MedianOfTrials(const BenchConfig& config, const std::function<RunResult()>& run_once) {
+  std::vector<RunResult> trials;
+  trials.reserve(config.trials);
+  for (std::uint32_t i = 0; i < std::max<std::uint32_t>(1, config.trials); ++i) {
+    trials.push_back(run_once());
+  }
+  std::sort(trials.begin(), trials.end(),
+            [](const RunResult& a, const RunResult& b) { return a.ops_per_sec < b.ops_per_sec; });
+
+  RunResult median = trials[trials.size() / 2];
+  median.trials = static_cast<std::uint32_t>(trials.size());
+  median.ops_per_sec_min = trials.front().ops_per_sec;
+  median.ops_per_sec_max = trials.back().ops_per_sec;
+  return median;
 }
 
 // Zipfian sampler over [0, n) via a precomputed cumulative distribution.
@@ -243,19 +268,19 @@ std::string JsonEscape(const std::string& s) {
 
 std::vector<RunResult> RunNamedWorkload(const std::string& name, const BenchConfig& config) {
   if (name == "fill-sequential") {
-    return {RunFill(config, true)};
+    return {MedianOfTrials(config, [&] { return RunFill(config, true); })};
   }
   if (name == "fill-random") {
-    return {RunFill(config, false)};
+    return {MedianOfTrials(config, [&] { return RunFill(config, false); })};
   }
   if (name == "read-random-uniform") {
-    return {RunReads(config, false)};
+    return {MedianOfTrials(config, [&] { return RunReads(config, false); })};
   }
   if (name == "read-random-zipfian") {
-    return {RunReads(config, true)};
+    return {MedianOfTrials(config, [&] { return RunReads(config, true); })};
   }
   if (name == "mixed") {
-    return {RunMixed(config)};
+    return {MedianOfTrials(config, [&] { return RunMixed(config); })};
   }
   return {};
 }
@@ -263,23 +288,29 @@ std::vector<RunResult> RunNamedWorkload(const std::string& name, const BenchConf
 std::vector<RunResult> RunSuite(const BenchConfig& config) {
   std::vector<RunResult> results;
 
-  std::fprintf(stderr, "running fill-sequential ...\n");
-  results.push_back(RunFill(config, true));
-  std::fprintf(stderr, "running fill-random ...\n");
-  results.push_back(RunFill(config, false));
+  std::fprintf(stderr, "running fill-sequential (%u trials) ...\n", config.trials);
+  results.push_back(MedianOfTrials(config, [&] { return RunFill(config, true); }));
+  std::fprintf(stderr, "running fill-random (%u trials) ...\n", config.trials);
+  results.push_back(MedianOfTrials(config, [&] { return RunFill(config, false); }));
 
   // The read and mixed workloads share one populated database so the expensive
-  // fill happens once. Reads do not mutate it, and mixed runs last.
+  // fill happens once. Reads do not mutate it; mixed does, so it runs last.
   std::fprintf(stderr, "populating %llu keys for the read workloads ...\n",
                static_cast<unsigned long long>(config.num_keys));
   auto db = OpenFreshDb(config, "reads");
   Populate(db.get(), config);
-  std::fprintf(stderr, "running read-random-uniform ...\n");
-  results.push_back(MeasureReads(db.get(), config, false));
-  std::fprintf(stderr, "running read-random-zipfian ...\n");
-  results.push_back(MeasureReads(db.get(), config, true));
-  std::fprintf(stderr, "running mixed ...\n");
-  results.push_back(MeasureMixed(db.get(), config));
+
+  // One untimed pass so the trials measure a steady state rather than the first
+  // touch of every block.
+  std::fprintf(stderr, "warming the read path ...\n");
+  MeasureReads(db.get(), config, false);
+
+  std::fprintf(stderr, "running read-random-uniform (%u trials) ...\n", config.trials);
+  results.push_back(MedianOfTrials(config, [&] { return MeasureReads(db.get(), config, false); }));
+  std::fprintf(stderr, "running read-random-zipfian (%u trials) ...\n", config.trials);
+  results.push_back(MedianOfTrials(config, [&] { return MeasureReads(db.get(), config, true); }));
+  std::fprintf(stderr, "running mixed (%u trials) ...\n", config.trials);
+  results.push_back(MedianOfTrials(config, [&] { return MeasureMixed(db.get(), config); }));
   db->Close();
 
   return results;
@@ -291,6 +322,10 @@ void WriteResultsJson(const std::string& path, const BenchConfig& config,
   const std::size_t cores = CountLines("/proc/cpuinfo", "processor");
   const std::string mem = ReadFirstMatch("/proc/meminfo", "MemTotal");
   const std::string os = ReadFirstMatch("/etc/os-release", "PRETTY_NAME");
+  // The "hypervisor" cpu flag marks a guest; recorded so the numbers are never
+  // mistaken for bare-metal results.
+  const std::string flags = ReadFirstMatch("/proc/cpuinfo", "flags");
+  const bool virtualized = flags.find("hypervisor") != std::string::npos;
 
   std::ostringstream json;
   json << "{\n";
@@ -298,7 +333,8 @@ void WriteResultsJson(const std::string& path, const BenchConfig& config,
   json << "    \"cpu_model\": \"" << JsonEscape(cpu) << "\",\n";
   json << "    \"cores\": " << cores << ",\n";
   json << "    \"mem_total\": \"" << JsonEscape(mem) << "\",\n";
-  json << "    \"os\": \"" << JsonEscape(os) << "\"\n";
+  json << "    \"os\": \"" << JsonEscape(os) << "\",\n";
+  json << "    \"virtualized\": " << (virtualized ? "true" : "false") << "\n";
   json << "  },\n";
   json << "  \"config\": {\n";
   json << "    \"num_ops\": " << config.num_ops << ",\n";
@@ -307,6 +343,7 @@ void WriteResultsJson(const std::string& path, const BenchConfig& config,
   json << "    \"value_size\": " << config.value_size << ",\n";
   json << "    \"flush_threshold_bytes\": " << config.flush_threshold_bytes << ",\n";
   json << "    \"zipfian_skew\": " << config.zipfian_skew << ",\n";
+  json << "    \"trials\": " << config.trials << ",\n";
   json << "    \"seed\": " << config.seed << "\n";
   json << "  },\n";
   json << "  \"results\": [\n";
@@ -317,9 +354,14 @@ void WriteResultsJson(const std::string& path, const BenchConfig& config,
     json << "      \"num_ops\": " << r.num_ops << ",\n";
     json << "      \"seconds\": " << r.seconds << ",\n";
     json << "      \"ops_per_sec\": " << r.ops_per_sec << ",\n";
+    json << "      \"trials\": " << r.trials << ",\n";
+    json << "      \"ops_per_sec_min\": " << r.ops_per_sec_min << ",\n";
+    json << "      \"ops_per_sec_max\": " << r.ops_per_sec_max << ",\n";
     json << "      \"p50_us\": " << r.p50_us << ",\n";
     json << "      \"p95_us\": " << r.p95_us << ",\n";
-    json << "      \"p99_us\": " << r.p99_us << "\n";
+    json << "      \"p99_us\": " << r.p99_us << ",\n";
+    json << "      \"p999_us\": " << r.p999_us << ",\n";
+    json << "      \"max_us\": " << r.max_us << "\n";
     json << "    }" << (i + 1 < results.size() ? "," : "") << "\n";
   }
   json << "  ]\n";

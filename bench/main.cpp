@@ -1,6 +1,7 @@
 // Benchmark harness for the lsm engine. Runs reproducible workloads through the
-// public api and reports ops/sec and p50/p95/p99 latencies, writing the results
-// (and the machine specs) to json. See docs/design.md (m7).
+// public api and reports ops/sec and p50/p95/p99/p99.9 latencies, writing the
+// results (and the machine specs) to json. Each workload runs several trials and
+// the median is reported. See docs/design.md (m7).
 
 #include <cstdint>
 #include <cstdio>
@@ -27,19 +28,24 @@ bool MatchFlag(const std::string& arg, const std::string& name, std::string* val
 void PrintUsage() {
   std::fprintf(stderr,
                "usage: lsm_bench [--workload=NAME] [--num_ops=N] [--num_keys=N]\n"
-               "                 [--value_size=N] [--key_size=N] [--seed=N]\n"
+               "                 [--value_size=N] [--key_size=N] [--seed=N] [--trials=N]\n"
                "                 [--flush_threshold=BYTES] [--db_root=DIR] [--out=FILE]\n"
                "workloads: fill-sequential fill-random read-random-uniform\n"
                "           read-random-zipfian mixed  (default: full suite)\n");
 }
 
 void PrintTable(const std::vector<lsm::bench::RunResult>& results) {
-  std::printf("\n%-22s %12s %12s %10s %10s %10s\n", "workload", "ops", "ops/sec", "p50(us)",
-              "p95(us)", "p99(us)");
+  std::printf("\n%-22s %10s %12s %9s %9s %9s %10s %10s\n", "workload", "ops", "ops/sec", "p50(us)",
+              "p95(us)", "p99(us)", "p99.9(us)", "max(us)");
   for (const lsm::bench::RunResult& r : results) {
-    std::printf("%-22s %12llu %12.0f %10.2f %10.2f %10.2f\n", r.workload.c_str(),
+    std::printf("%-22s %10llu %12.0f %9.2f %9.2f %9.2f %10.2f %10.2f\n", r.workload.c_str(),
                 static_cast<unsigned long long>(r.num_ops), r.ops_per_sec, r.p50_us, r.p95_us,
-                r.p99_us);
+                r.p99_us, r.p999_us, r.max_us);
+  }
+  std::printf("\nops/sec is the median of n trials; spread across trials:\n");
+  for (const lsm::bench::RunResult& r : results) {
+    std::printf("  %-22s n=%u  min %.0f  max %.0f\n", r.workload.c_str(), r.trials,
+                r.ops_per_sec_min, r.ops_per_sec_max);
   }
 }
 
@@ -65,6 +71,8 @@ int main(int argc, char** argv) {
       config.key_size = std::strtoull(value.c_str(), nullptr, 10);
     } else if (MatchFlag(arg, "seed", &value)) {
       config.seed = std::strtoull(value.c_str(), nullptr, 10);
+    } else if (MatchFlag(arg, "trials", &value)) {
+      config.trials = static_cast<std::uint32_t>(std::strtoul(value.c_str(), nullptr, 10));
     } else if (MatchFlag(arg, "flush_threshold", &value)) {
       config.flush_threshold_bytes = std::strtoull(value.c_str(), nullptr, 10);
     } else if (MatchFlag(arg, "db_root", &value)) {

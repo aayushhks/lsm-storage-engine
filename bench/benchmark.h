@@ -18,10 +18,13 @@ struct BenchConfig {
   std::uint64_t seed = 42;
   double zipfian_skew = 0.99;
   std::size_t flush_threshold_bytes = 4ULL << 20;  // 4 MiB
+  std::uint32_t trials = 3;  // repeats per workload; the median trial is reported
   std::string db_root = "/tmp/lsm_bench";
 };
 
-// Latency and throughput for one workload.
+// Latency and throughput for one workload. When a workload is repeated these
+// are the median trial's numbers, and ops_per_sec_min/max bound the spread
+// across trials so run-to-run noise is visible rather than hidden.
 struct RunResult {
   std::string workload;
   std::uint64_t num_ops = 0;
@@ -30,6 +33,11 @@ struct RunResult {
   double p50_us = 0.0;
   double p95_us = 0.0;
   double p99_us = 0.0;
+  double p999_us = 0.0;
+  double max_us = 0.0;
+  std::uint32_t trials = 1;
+  double ops_per_sec_min = 0.0;
+  double ops_per_sec_max = 0.0;
 };
 
 // Runs the full standard suite (fill-sequential, fill-random, read-random
