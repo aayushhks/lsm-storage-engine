@@ -2,6 +2,8 @@
 
 [![ci](https://github.com/aayushhks/lsm-storage-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/aayushhks/lsm-storage-engine/actions/workflows/ci.yml)
 
+**[Project overview and benchmarks →](https://lsm-storage-engine.vercel.app/)**
+
 A single-node, log-structured merge-tree key-value store written from scratch in
 C++20 — a write-ahead log with crash recovery, immutable SSTables with a sparse
 index, per-table bloom filters, and size-tiered background compaction. The engine
@@ -55,8 +57,9 @@ flowchart TD
   false-positive rate is a build parameter (measured 1.08% at the 1% target).
 - **Lock-free-read concurrency** — compaction never blocks or breaks a reader
   (immutable, reference-counted table-set snapshot); verified under ThreadSanitizer.
-- **Benchmarked and profiled** — reproducible workloads, committed numbers, and a
-  real read-path optimization found by profiling (−48% instructions, +19% reads).
+- **Benchmarked and profiled** — reproducible workloads, committed numbers with
+  the tail (p99.9) and the run-to-run spread, and a real read-path optimization
+  found by profiling: **−51% instructions**, verified by an A/B build.
 - **Green CI** — every push builds on gcc + clang (Debug/Release), runs the suite
   under ASan/UBSan and TSan, and checks clang-tidy and clang-format.
 
@@ -103,32 +106,52 @@ fallible call returns a `Status`; a missing key is `Status::NotFound`.
 
 ## benchmarks
 
-Numbers from a single run of the `bench` harness — no cherry-picking; the raw JSON
-is committed at [`bench/results/results.json`](bench/results/results.json) and the
-charts are regenerated from it by `bench/plot_results.py`.
+Raw JSON is committed at [`bench/results/results.json`](bench/results/results.json)
+and the charts are regenerated from it by `bench/plot_results.py`.
 
-Hardware: **Intel Xeon @ 2.10 GHz, 4 cores, 16 GB RAM, Ubuntu 24.04 (ext4)**.
-Config: 50,000 ops per workload, 100,000-key read set, 16-byte keys, 100-byte
-values, 4 MiB flush threshold.
+**How these were measured** — the methodology matters more than the numbers:
 
-| workload | ops/sec | p50 (µs) | p95 (µs) | p99 (µs) |
-|---|---:|---:|---:|---:|
-| fill-sequential | 1,556 | 595.57 | 937.54 | 1227.50 |
-| fill-random | 1,533 | 614.08 | 929.50 | 1190.85 |
-| read-random-uniform | 738,001 | 1.08 | 2.05 | 3.80 |
-| read-random-zipfian | 935,160 | 0.78 | 1.32 | 2.46 |
-| mixed-50-50 | 2,897 | 28.61 | 864.14 | 1726.27 |
+- **Machine**: Intel Xeon @ 2.80 GHz, 4 vCPU, 16 GB RAM, Ubuntu 24.04, ext4 — a
+  **KVM guest, not bare metal**.
+- **Config**: 50,000 ops per workload, 100,000-key set, 16-byte keys, 100-byte
+  values, 4 MiB flush threshold, seed 42. Each workload runs **3 trials and the
+  median is reported**; the min–max column shows the spread.
+- **Reads are CPU-bound, not disk-bound.** The working set is ~12 MB on a 16 GB
+  machine, so after the warm-up pass it is entirely in page cache. These numbers
+  measure the lookup path — bloom probe, index binary search, block parse, one
+  `pread` — not the storage device.
+- Single-threaded client; each op timed individually with `steady_clock`.
+
+| workload | ops/sec (median) | trials min–max | p50 (µs) | p95 (µs) | p99 (µs) | p99.9 (µs) |
+|---|---:|---:|---:|---:|---:|---:|
+| fill-sequential | 5,311 | 5,217–5,644 | 176.35 | 285.14 | 456.52 | 627.72 |
+| fill-random | 5,375 | 5,175–5,426 | 172.35 | 290.71 | 430.14 | 702.70 |
+| read-random-uniform | 763,024 | 745,305–768,018 | 1.12 | 1.78 | 2.51 | 30.81 |
+| read-random-zipfian | 851,974 | 811,294–869,776 | 0.87 | 1.58 | 2.51 | 28.00 |
+| mixed-50-50 | 10,998 | 9,965–11,138 | 31.38 | 227.12 | 353.06 | 495.21 |
 
 ![Throughput by workload](bench/results/ops_per_sec.png)
 ![Latency percentiles by workload](bench/results/latency.png)
 
-Reads run at hundreds of thousands of ops/sec with roughly single-microsecond p50
-(memtable or one bloom-filtered `pread`). Writes are **fsync-bound** at ~1.5k
-ops/sec — every write flushes to disk before returning, so p50 is essentially one
-`fsync`. Group commit (a listed next step) is the known remedy.
+Reads run at hundreds of thousands of ops/sec with roughly single-microsecond p50.
+Zipfian beats uniform (852k vs 763k) because skew keeps the hot blocks and
+skip-list nodes in cache — the result you'd expect if the benchmark is measuring
+something real.
+
+Writes are **fsync-bound**, which means their throughput is a property of the
+host's storage rather than of the engine: on a different VM instance the same
+binary measured 1,556 ops/sec at a 595 µs p50, and here it measures 5,311 ops/sec
+at 176 µs. In both cases **p50 ≈ one `fsync`** — that invariant is the real
+result, not the absolute number. Group commit (a listed next step) is the remedy.
+
+Two tail effects are worth naming. Reads sit at 2.5 µs through p99 but jump to
+**~30 µs at p99.9** (background compaction plus scheduler preemption on a 4-vCPU
+guest). The worst single write in a fill run is **~34 ms**, which is a memtable
+flush running synchronously under the write lock — precisely the limitation
+listed below, with the benchmark putting a number on it.
 
 ```sh
-./build-release/bench/lsm_bench --out=bench/results/results.json
+./build-release/bench/lsm_bench --trials=3 --out=bench/results/results.json
 python3 bench/plot_results.py bench/results/results.json
 ```
 
@@ -137,16 +160,35 @@ python3 bench/plot_results.py bench/results/results.json
 Profiling the read path (valgrind/callgrind — this container has no `perf`; the
 perf recipe is in [`bench/profiling/`](bench/profiling/README.md)) found one
 dominant hotspot: `SSTableReader::Get` allocated a fresh block buffer per lookup
-and `resize()` zero-filled ~4 KiB that `pread` then immediately overwrote — **42%
-of read-loop instructions spent on a `memset` that was thrown away**, plus ~6% in
-per-lookup `malloc`/`free`.
+and `resize()` zero-filled ~4 KiB that `pread` then immediately overwrote —
+**44.7% of read-loop instructions spent on a `memset` that was thrown away**, plus
+per-lookup `malloc`/`free` traffic.
 
 The fix was a reused `thread_local` block buffer and a `PreadInto` that skips the
-zero-fill. Measured, same machine, before vs. after:
+zero-fill. It was verified as an **A/B on one machine**: two builds of the same
+tree differing only in `src/sstable.cpp`, run through the same harness.
 
-- **instructions: read loop 394.5M → 205.7M (−48%)** — the memset vanishes.
-- **throughput (sstable-backed read-random): median ~896k → ~1.07M ops/sec (+19%)**,
-  with far less run-to-run jitter, and p99 ~1.7µs → ~1.3µs.
+**Instructions in the read loop: 372.6M → 182.1M (−51%).** Callgrind counts
+instructions deterministically, so this reproduces exactly on any machine — which
+is why it is the headline rather than a wall-clock figure.
+
+| read-loop cost | before | after | change |
+|---|---:|---:|---:|
+| `__memset_avx2` (the waste) | 166.5M · 44.7% | 1.2M · 0.7% | gone |
+| `ParseEntry` (real work) | 41.6M | 41.6M | unchanged |
+| `__memcmp_avx2` (real work) | 35.6M | 35.6M | unchanged |
+| malloc / free traffic | ~21.5M | ~5.1M | −76% |
+| **total** | **372.6M** | **182.1M** | **−51%** |
+
+The two genuine-work rows are *identical in absolute terms* before and after —
+only the overhead disappeared, which is what a real optimization looks like as
+opposed to a benchmark that quietly stopped doing the work.
+
+In wall-clock terms, five trials each: **620,018 → 710,090 ops/sec median
+(+14.5%)**, p50 1.35 µs → 1.14 µs. The trial ranges do overlap (574.7k–713.6k
+before, 634.4k–802.3k after), so the honest reading is that the wall-clock gain is
+real but noisy on a shared vCPU, and the instruction count is the number worth
+quoting.
 
 | before | after |
 |---|---|
