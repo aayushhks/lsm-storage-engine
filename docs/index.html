@@ -3,447 +3,782 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="A from-scratch C++20 LSM-tree key-value storage engine — WAL, SSTables, bloom filters, background compaction; benchmarked and profiled.">
-<title>lsm-storage-engine — a from-scratch C++ LSM key-value store</title>
+<meta name="description" content="A single-node log-structured merge-tree key-value store written from scratch in C++20 — WAL, SSTables, bloom filters, and background compaction, benchmarked and profiled.">
+<title>lsm-storage-engine — a C++20 LSM-tree key-value store</title>
 <style>
   :root {
-    --bg: #f6f7f9;
-    --surface: #ffffff;
-    --surface-2: #eef1f5;
-    --border: #d9dfe6;
-    --border-strong: #c3ccd6;
-    --ink: #141b24;
-    --muted: #59636f;
-    --faint: #8c96a1;
-    --accent: #b06f16;
-    --accent-soft: #f2e4cd;
-    --pos: #2f8f68;
-    --pos-soft: #dff0e7;
-    --neg: #c25232;
-    --neg-soft: #f6e2da;
-    --track: #e6eaef;
-    --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
-    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --maxw: 1080px;
-    --r: 8px;
+    color-scheme: light;
+    --surface:      #fcfcfb;
+    --surface-2:    #f5f4f1;
+    --ink:          #0b0b0b;
+    --ink-2:        #52514e;
+    --ink-3:        #7a7873;
+    --rule:         #e3e2df;
+    --read:         #2a78d6;
+    --write:        #eb6834;
+    --track:        #eceae6;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0e141b;
-      --surface: #161e28;
-      --surface-2: #1c2733;
-      --border: #283542;
-      --border-strong: #35455571;
-      --ink: #e7edf3;
-      --muted: #97a3b1;
-      --faint: #6d7887;
-      --accent: #e0a24a;
-      --accent-soft: #2c2415;
-      --pos: #4fb98c;
-      --pos-soft: #16261f;
-      --neg: #db7451;
-      --neg-soft: #291a15;
-      --track: #222d39;
+      color-scheme: dark;
+      --surface:      #1a1a19;
+      --surface-2:    #232322;
+      --ink:          #ffffff;
+      --ink-2:        #c3c2b7;
+      --ink-3:        #8f8e86;
+      --rule:         #383835;
+      --read:         #3987e5;
+      --write:        #d95926;
+      --track:        #2c2c2a;
     }
-  }
-  :root[data-theme="light"] {
-    --bg: #f6f7f9; --surface: #ffffff; --surface-2: #eef1f5; --border: #d9dfe6;
-    --border-strong: #c3ccd6; --ink: #141b24; --muted: #59636f; --faint: #8c96a1;
-    --accent: #b06f16; --accent-soft: #f2e4cd; --pos: #2f8f68; --pos-soft: #dff0e7;
-    --neg: #c25232; --neg-soft: #f6e2da; --track: #e6eaef;
-  }
-  :root[data-theme="dark"] {
-    --bg: #0e141b; --surface: #161e28; --surface-2: #1c2733; --border: #283542;
-    --border-strong: #354555; --ink: #e7edf3; --muted: #97a3b1; --faint: #6d7887;
-    --accent: #e0a24a; --accent-soft: #2c2415; --pos: #4fb98c; --pos-soft: #16261f;
-    --neg: #db7451; --neg-soft: #291a15; --track: #222d39;
   }
 
   * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
   body {
-    margin: 0; background: var(--bg); color: var(--ink);
-    font-family: var(--font-sans); line-height: 1.65;
+    margin: 0;
+    background: var(--surface);
+    color: var(--ink);
+    font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "kern";
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
 
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; text-underline-offset: 3px; }
-  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
 
-  .mono { font-family: var(--font-mono); }
-  .label {
-    font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase;
-    letter-spacing: 0.13em; color: var(--faint);
+  code, .mono, table, .num {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                 "Liberation Mono", monospace;
   }
-  .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-  /* header */
-  header.top {
-    position: sticky; top: 0; z-index: 10;
-    background: color-mix(in srgb, var(--bg) 86%, transparent);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid var(--border);
-  }
-  .top-inner { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 60px; }
-  .brand { display: flex; align-items: baseline; gap: 10px; font-family: var(--font-mono); font-weight: 600; }
-  .brand .dot { color: var(--accent); }
-  .brand .sub { color: var(--faint); font-size: 0.8rem; font-weight: 400; }
-  .top-actions { display: flex; align-items: center; gap: 14px; }
-  .pill {
-    display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono);
-    font-size: 0.74rem; padding: 5px 11px; border-radius: 100px;
-    border: 1px solid var(--border); background: var(--surface); color: var(--muted);
-  }
-  .pill .led { width: 7px; height: 7px; border-radius: 50%; background: var(--pos); box-shadow: 0 0 0 3px var(--pos-soft); }
-  .ghost-btn {
-    font-family: var(--font-mono); font-size: 0.8rem; padding: 7px 14px; border-radius: 6px;
-    border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink);
-  }
-  .ghost-btn:hover { border-color: var(--accent); text-decoration: none; }
+  /* ---------- header ---------- */
 
-  /* hero */
-  .hero { padding: 72px 0 40px; }
-  .eyebrow { display: inline-block; margin-bottom: 22px; }
-  .eyebrow .tag {
-    font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase;
-    color: var(--accent); border: 1px solid var(--accent); border-radius: 100px; padding: 4px 12px;
-    background: var(--accent-soft);
-  }
+  header { padding: 72px 0 40px; }
+
   h1 {
-    font-size: clamp(2.1rem, 5.2vw, 3.35rem); line-height: 1.06; margin: 0 0 20px;
-    letter-spacing: -0.02em; text-wrap: balance; font-weight: 680;
+    font-size: clamp(28px, 5vw, 38px);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    margin: 0 0 14px;
+    font-weight: 620;
   }
-  h1 em { font-style: normal; color: var(--accent); }
-  .lede { max-width: 60ch; color: var(--muted); font-size: 1.12rem; margin: 0 0 14px; }
-  .meta-line { font-family: var(--font-mono); font-size: 0.82rem; color: var(--faint); }
-  .meta-line b { color: var(--muted); font-weight: 500; }
 
-  /* stat tiles */
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 40px; }
-  .tile {
-    background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-    padding: 18px 18px 16px; position: relative; overflow: hidden;
+  .lede {
+    font-size: clamp(16px, 2.2vw, 18px);
+    color: var(--ink-2);
+    margin: 0 0 26px;
+    max-width: 62ch;
   }
-  .tile::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); opacity: 0.55; }
-  .tile .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 1.85rem; font-weight: 600; letter-spacing: -0.02em; }
-  .tile .v small { font-size: 0.9rem; color: var(--muted); font-weight: 500; }
-  .tile .k { margin-top: 4px; color: var(--muted); font-size: 0.86rem; }
-  .tile.win::before { background: var(--pos); opacity: 0.8; }
-  .tile.win .v { color: var(--pos); }
 
-  /* sections */
-  section { padding: 46px 0; border-top: 1px solid var(--border); }
-  .sec-head { margin-bottom: 26px; }
-  .sec-head h2 { font-size: 1.5rem; margin: 6px 0 6px; letter-spacing: -0.01em; }
-  .sec-head p { color: var(--muted); margin: 0; max-width: 66ch; }
+  .links { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 
-  /* architecture */
-  .arch { display: flex; flex-direction: column; gap: 10px; }
-  .track-label { font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin: 10px 0 2px; }
-  .flow { display: flex; align-items: stretch; flex-wrap: wrap; gap: 10px; }
-  .node {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
-    padding: 12px 15px; min-width: 150px; flex: 1 1 150px;
+  .btn {
+    display: inline-block;
+    padding: 7px 14px;
+    border: 1px solid var(--rule);
+    border-radius: 7px;
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 14px;
+    transition: border-color .15s ease, background .15s ease;
   }
-  .node .nt { font-family: var(--font-mono); font-weight: 600; font-size: 0.9rem; }
-  .node .nd { color: var(--muted); font-size: 0.78rem; margin-top: 3px; }
-  .node.key { border-color: var(--accent); }
-  .arrow { display: flex; align-items: center; color: var(--faint); font-family: var(--font-mono); font-size: 0.72rem; padding: 0 2px; white-space: nowrap; }
-  .arrow span { display: inline-flex; flex-direction: column; align-items: center; line-height: 1.1; }
-  .arrow b { color: var(--muted); font-weight: 500; }
+  .btn:hover { border-color: var(--read); background: var(--surface-2); }
+  .btn-primary { background: var(--read); border-color: var(--read); color: #fff; }
+  .btn-primary:hover { background: var(--read); opacity: .9; color: #fff; }
 
-  /* benchmark */
-  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
-  .table-scroll { overflow-x: auto; }
-  table.bench { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width: 560px; }
-  table.bench th, table.bench td { text-align: right; padding: 12px 16px; white-space: nowrap; }
-  table.bench th:first-child, table.bench td:first-child { text-align: left; }
-  table.bench thead th { font-family: var(--font-mono); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); border-bottom: 1px solid var(--border); font-weight: 500; }
-  table.bench td { border-bottom: 1px solid var(--border); }
-  table.bench tbody tr:last-child td { border-bottom: 0; }
-  table.bench td.n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  table.bench .wl { font-family: var(--font-mono); font-size: 0.86rem; }
-  .kind { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; vertical-align: middle; }
-  .kind.r { background: var(--pos); }
-  .kind.w { background: var(--accent); }
-  .kind.m { background: var(--muted); }
+  /* ---------- stat row ---------- */
 
-  .bars { margin-top: 20px; display: flex; flex-direction: column; gap: 9px; }
-  .bar-row { display: grid; grid-template-columns: 160px 1fr auto; align-items: center; gap: 12px; }
-  .bar-row .bl { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); }
-  .bar-track { height: 12px; background: var(--track); border-radius: 3px; overflow: hidden; }
-  .bar-fill { display: block; height: 100%; border-radius: 3px; }
-  .bar-fill.r { background: var(--pos); }
-  .bar-fill.w { background: var(--accent); }
-  .bar-fill.m { background: var(--muted); }
-  .bar-row .bv { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.82rem; min-width: 92px; text-align: right; }
-  .bars-cap { font-family: var(--font-mono); font-size: 0.72rem; color: var(--faint); margin-top: 12px; }
-
-  /* profiling */
-  .prof-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px; }
-  .prof-find { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 22px; }
-  .prof-find h3 { margin: 0 0 10px; font-size: 1.05rem; }
-  .prof-find p { color: var(--muted); margin: 0 0 14px; font-size: 0.95rem; }
-  .prof-find code { font-family: var(--font-mono); font-size: 0.85em; background: var(--surface-2); padding: 1px 6px; border-radius: 4px; color: var(--ink); }
-  .compare { display: flex; flex-direction: column; gap: 18px; }
-  .cmp { }
-  .cmp .ct { font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--faint); margin-bottom: 9px; }
-  .cmp-bars { display: flex; flex-direction: column; gap: 7px; }
-  .cmp-row { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 10px; }
-  .cmp-row .cl { font-family: var(--font-mono); font-size: 0.74rem; color: var(--muted); }
-  .cmp-track { height: 15px; border-radius: 3px; background: var(--track); overflow: hidden; }
-  .cmp-fill { display: block; height: 100%; border-radius: 3px; }
-  .cmp-fill.before { background: var(--neg); }
-  .cmp-fill.after { background: var(--pos); }
-  .cmp-row .cv { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.78rem; text-align: right; min-width: 78px; }
-  .delta { display: inline-block; margin-top: 9px; font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; }
-  .delta.good { color: var(--pos); }
-
-  /* cards */
-  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
-  .card h3 { margin: 0 0 7px; font-size: 0.98rem; font-family: var(--font-mono); }
-  .card p { margin: 0; color: var(--muted); font-size: 0.9rem; }
-  .card .over { color: var(--accent); }
-
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-  .listcol h3 { font-size: 1.02rem; margin: 0 0 14px; }
-  ul.clean { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 11px; }
-  ul.clean li { display: flex; gap: 11px; color: var(--muted); font-size: 0.92rem; }
-  ul.clean li .mk { color: var(--faint); font-family: var(--font-mono); flex: none; }
-  ul.clean.next li .mk { color: var(--accent); }
-  ul.clean li b { color: var(--ink); font-weight: 600; }
-
-  footer { padding: 40px 0 56px; border-top: 1px solid var(--border); color: var(--faint); }
-  .foot-inner { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; }
-  .foot-inner .mono { font-size: 0.8rem; }
-
-  @media (max-width: 820px) {
-    .tiles { grid-template-columns: repeat(2, 1fr); }
-    .prof-grid, .two-col { grid-template-columns: 1fr; }
-    .cards { grid-template-columns: 1fr; }
-    .bar-row { grid-template-columns: 120px 1fr auto; }
-    .brand .sub { display: none; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 0 0 8px;
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .reveal { animation: rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .stat { background: var(--surface); padding: 18px 18px 16px; }
+  .stat-value {
+    font-size: 25px;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    font-weight: 600;
+    margin-bottom: 5px;
   }
-  @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .stat-label { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
+  .stat-note { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
+
+  /* ---------- sections ---------- */
+
+  section { padding: 46px 0 0; }
+
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--ink-3);
+    font-weight: 600;
+    margin: 0 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  h3 {
+    font-size: 16.5px;
+    font-weight: 600;
+    margin: 30px 0 10px;
+    letter-spacing: -0.01em;
+  }
+
+  p { margin: 0 0 14px; color: var(--ink-2); max-width: 68ch; }
+  p strong, li strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--read); }
+
+  /* ---------- pipeline ---------- */
+
+  .pipe { margin: 4px 0 8px; }
+  .pipe-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .pipe-row:last-child { border-bottom: 0; }
+  .pipe-step {
+    flex: 0 0 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+    display: grid;
+    place-items: center;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    margin-top: 1px;
+  }
+  .pipe-body { flex: 1; min-width: 0; }
+  .pipe-name { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+  .pipe-desc { color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
+
+  /* ---------- charts ---------- */
+
+  .chart { margin: 22px 0 6px; }
+  .chart-title { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
+  .chart-sub { font-size: 12.5px; color: var(--ink-3); margin-bottom: 15px; }
+
+  .bar-row { margin-bottom: 15px; }
+  .bar-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .bar-name { font-size: 13.5px; color: var(--ink-2); }
+  .bar-value { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; }
+  .bar-track {
+    height: 9px;
+    background: var(--track);
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .bar-fill { display: block; height: 100%; border-radius: 5px; }
+  .fill-read  { background: var(--read); }
+  .fill-write { background: var(--write); }
+  .fill-muted { background: var(--ink-3); }
+
+  .axis {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    margin-top: 9px;
+    padding-top: 7px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .legend {
+    display: flex;
+    gap: 18px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    margin-bottom: 16px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: block; }
+
+  /* ---------- tables ---------- */
+
+  .scroll { overflow-x: auto; margin: 18px 0 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 520px; }
+  th, td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--rule); }
+  th:first-child, td:first-child { text-align: left; }
+  th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  /* Units stay lowercase: uppercasing "µs" yields "ΜS", which reads as ms. */
+  th .unit { text-transform: none; letter-spacing: 0; }
+  td { color: var(--ink-2); }
+  td:first-child { color: var(--ink); }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  /* ---------- note ---------- */
+
+  .note {
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 9px;
+    padding: 16px 18px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    margin: 18px 0;
+  }
+  .note-title {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--ink-3);
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .note ul { margin: 0; padding-left: 18px; }
+  .note li { margin-bottom: 5px; line-height: 1.55; }
+  .note li:last-child { margin-bottom: 0; }
+
+  /* ---------- delta / profiling ---------- */
+
+  .delta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 12px;
+    margin: 4px 0 18px;
+  }
+  .delta-num {
+    font-size: 44px;
+    font-weight: 620;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: var(--read);
+  }
+  .delta-text { font-size: 14px; color: var(--ink-2); }
+
+  /* ---------- cards ---------- */
+
+  .cards { display: grid; gap: 1px; background: var(--rule);
+           border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+  .card { background: var(--surface); padding: 17px 19px; }
+  .card-title { font-weight: 600; font-size: 14.5px; margin-bottom: 5px; }
+  .card-body { font-size: 13.5px; color: var(--ink-2); line-height: 1.6; }
+
+  ul.plain { margin: 0 0 14px; padding-left: 19px; color: var(--ink-2); }
+  ul.plain li { margin-bottom: 7px; line-height: 1.6; max-width: 66ch; }
+
+  figure { margin: 18px 0; }
+  figure img {
+    width: 100%; height: auto; display: block;
+    border: 1px solid var(--rule); border-radius: 8px; background: #fff;
+  }
+  figcaption { font-size: 12.5px; color: var(--ink-3); margin-top: 8px; }
+
+  footer {
+    margin-top: 60px;
+    padding: 26px 0 50px;
+    border-top: 1px solid var(--rule);
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+  footer a { color: var(--ink-2); }
 </style>
 </head>
 <body>
-<header class="top">
-  <div class="wrap top-inner">
-    <div class="brand"><span class="dot" aria-hidden="true">≡</span><span>lsm-storage-engine</span><span class="sub">C++20 · from scratch</span></div>
-    <div class="top-actions">
-      <span class="pill"><span class="led"></span>CI green</span>
-      <a class="ghost-btn" href="https://github.com/aayushhks/lsm-storage-engine" target="_blank" rel="noopener">View source →</a>
-    </div>
+
+<div class="wrap">
+
+<header>
+  <h1>lsm-storage-engine</h1>
+  <p class="lede">
+    A single-node, log-structured merge-tree key-value store written from scratch
+    in C++20 — a write-ahead log with crash recovery, immutable SSTables with a
+    sparse index, per-table bloom filters, and size-tiered background compaction.
+    The engine depends on the standard library only; CRC32 and the bloom hashing
+    are hand-rolled.
+  </p>
+  <div class="links">
+    <a class="btn btn-primary" href="https://github.com/aayushhks/lsm-storage-engine">Source on GitHub</a>
+    <a class="btn" href="https://github.com/aayushhks/lsm-storage-engine/blob/main/docs/design.md">Design doc</a>
+    <a class="btn" href="https://github.com/aayushhks/lsm-storage-engine/actions/workflows/ci.yml">CI</a>
   </div>
 </header>
 
-<main class="wrap">
-  <section class="hero" style="border-top: 0;">
-    <div class="reveal">
-      <div class="eyebrow"><span class="tag">log-structured merge tree</span></div>
-      <h1>A single-node key-value storage engine, <em>built from the disk up</em>.</h1>
-      <p class="lede">
-        Write-ahead log with crash recovery, immutable SSTables with a sparse index,
-        from-scratch bloom filters, and size-tiered background compaction — standard
-        library only, tested under three sanitizers, benchmarked and profiled.
-      </p>
-      <p class="meta-line"><b>Intel Xeon @ 2.10 GHz</b> · 4 cores · 16 GB · Ubuntu 24.04 (ext4) &nbsp;—&nbsp; all numbers from one committed run.</p>
+<div class="stats">
+  <div class="stat">
+    <div class="stat-value">763k<span style="font-size:15px;color:var(--ink-3)"> ops/s</span></div>
+    <div class="stat-label">Point reads, single thread</div>
+    <div class="stat-note">p50 1.12 µs · p99 2.51 µs</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">−51%</div>
+    <div class="stat-label">Read-path instructions cut</div>
+    <div class="stat-note">Profiled, then A/B verified</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">74</div>
+    <div class="stat-label">Tests, all green</div>
+    <div class="stat-note">ASan · UBSan · TSan</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">0</div>
+    <div class="stat-label">Third-party engine deps</div>
+    <div class="stat-note">Standard library only</div>
+  </div>
+</div>
 
-      <div class="tiles">
-        <div class="tile">
-          <div class="v num">935K<small> /s</small></div>
-          <div class="k">reads — zipfian, p99 2.46&thinsp;µs</div>
-        </div>
-        <div class="tile">
-          <div class="v num">1.1<small> µs</small></div>
-          <div class="k">read p50 — memtable or one pread</div>
-        </div>
-        <div class="tile">
-          <div class="v num">1.5K<small> /s</small></div>
-          <div class="k">writes — fsync-bound, durable</div>
-        </div>
-        <div class="tile win">
-          <div class="v num">+19%</div>
-          <div class="k">read throughput from profiling</div>
-        </div>
-      </div>
-    </div>
-  </section>
+<section>
+  <h2>What it is</h2>
+  <p>
+    An LSM-tree is the write-optimised structure behind RocksDB, Cassandra, and
+    most modern storage layers: writes go to a log and an in-memory sorted
+    structure, which is periodically frozen into an immutable sorted file, and
+    those files are merged in the background. This is that design built end to
+    end — not a wrapper, not a tutorial port.
+  </p>
+  <p>
+    It is <strong>not</strong> a RocksDB competitor. It is a from-scratch engine
+    built to understand and defend every layer, measured honestly on stated
+    hardware with the methodology written down.
+  </p>
 
-  <section>
-    <div class="sec-head">
-      <span class="label">architecture</span>
-      <h2>How a key moves through the engine</h2>
-      <p>Writes are durable before they are visible; reads consult the memtable then the tables newest-to-oldest, skipping any a bloom filter rules out; compaction runs off to the side.</p>
-    </div>
-    <div class="arch">
-      <div class="track-label">write path</div>
-      <div class="flow">
-        <div class="node key"><div class="nt">Put / Delete</div><div class="nd">byte-string key & value</div></div>
-        <div class="arrow"><span><b>append</b>→</span></div>
-        <div class="node"><div class="nt">WAL</div><div class="nd">crc32-framed, fsync per write</div></div>
-        <div class="arrow"><span><b>then</b>→</span></div>
-        <div class="node"><div class="nt">Memtable</div><div class="nd">hand-written skip list, sorted</div></div>
-        <div class="arrow"><span><b>threshold</b>→</span></div>
-        <div class="node"><div class="nt">Flush</div><div class="nd">immutable SSTable</div></div>
-      </div>
-
-      <div class="track-label">on disk</div>
-      <div class="flow">
-        <div class="node"><div class="nt">SSTable</div><div class="nd">data blocks · sparse index · bloom filter · footer</div></div>
-        <div class="arrow"><span>←<b>names live set</b></span></div>
-        <div class="node"><div class="nt">Manifest</div><div class="nd">updated by atomic rename</div></div>
-        <div class="arrow"><span>←<b>size-tiered merge</b></span></div>
-        <div class="node"><div class="nt">Compaction</div><div class="nd">background thread, k-way merge</div></div>
-      </div>
-
-      <div class="track-label">read path</div>
-      <div class="flow">
-        <div class="node key"><div class="nt">Get</div><div class="nd">point lookup</div></div>
-        <div class="arrow"><span>→</span></div>
-        <div class="node"><div class="nt">Memtable</div><div class="nd">newest writes win</div></div>
-        <div class="arrow"><span><b>miss</b>→</span></div>
-        <div class="node"><div class="nt">SSTables</div><div class="nd">newest→oldest, bloom-gated, first hit wins</div></div>
-        <div class="arrow"><span>→</span></div>
-        <div class="node"><div class="nt">value / not-found</div><div class="nd">tombstone ⇒ not-found</div></div>
-      </div>
-    </div>
-  </section>
-
-  <section>
-    <div class="sec-head">
-      <span class="label">benchmarks</span>
-      <h2>Reproducible workloads, honest numbers</h2>
-      <p>50,000 ops per workload over a 100,000-key set, 16-byte keys, 100-byte values, 4&nbsp;MiB flush threshold. The raw JSON and the chart script are committed — nothing here is hand-picked.</p>
-    </div>
-
-    <div class="panel table-scroll">
-      <table class="bench">
-        <thead>
-          <tr><th>workload</th><th>ops / sec</th><th>p50 µs</th><th>p95 µs</th><th>p99 µs</th></tr>
-        </thead>
-        <tbody>
-          <tr><td class="wl"><span class="kind w"></span>fill-sequential</td><td class="n">1,556</td><td class="n">595.6</td><td class="n">937.5</td><td class="n">1,227.5</td></tr>
-          <tr><td class="wl"><span class="kind w"></span>fill-random</td><td class="n">1,533</td><td class="n">614.1</td><td class="n">929.5</td><td class="n">1,190.9</td></tr>
-          <tr><td class="wl"><span class="kind r"></span>read-random-uniform</td><td class="n">738,001</td><td class="n">1.08</td><td class="n">2.05</td><td class="n">3.80</td></tr>
-          <tr><td class="wl"><span class="kind r"></span>read-random-zipfian</td><td class="n">935,160</td><td class="n">0.78</td><td class="n">1.32</td><td class="n">2.46</td></tr>
-          <tr><td class="wl"><span class="kind m"></span>mixed 50 / 50</td><td class="n">2,897</td><td class="n">28.6</td><td class="n">864.1</td><td class="n">1,726.3</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="bars">
-      <div class="bar-row"><span class="bl">read-zipfian</span><span class="bar-track"><span class="bar-fill r" style="width:99%"></span></span><span class="bv">935,160</span></div>
-      <div class="bar-row"><span class="bl">read-uniform</span><span class="bar-track"><span class="bar-fill r" style="width:97%"></span></span><span class="bv">738,001</span></div>
-      <div class="bar-row"><span class="bl">mixed 50/50</span><span class="bar-track"><span class="bar-fill m" style="width:27%"></span></span><span class="bv">2,897</span></div>
-      <div class="bar-row"><span class="bl">fill-sequential</span><span class="bar-track"><span class="bar-fill w" style="width:21%"></span></span><span class="bv">1,556</span></div>
-      <div class="bar-row"><span class="bl">fill-random</span><span class="bar-track"><span class="bar-fill w" style="width:20%"></span></span><span class="bv">1,533</span></div>
-    </div>
-    <p class="bars-cap">throughput, log scale — reads are memtable/pread-served; writes fsync to disk before returning (the durable, and honest, bottleneck).</p>
-  </section>
-
-  <section>
-    <div class="sec-head">
-      <span class="label">profiling pass</span>
-      <h2>A 42% memset that pread threw away</h2>
-      <p>Profiling the read path (callgrind — no perf in the CI container) found one dominant hotspot, and fixing it was a small, measurable win.</p>
-    </div>
-    <div class="prof-grid">
-      <div class="prof-find">
-        <h3>The finding</h3>
-        <p><code>SSTableReader::Get</code> allocated a fresh block buffer per lookup and <code>resize()</code> zero-filled ~4&nbsp;KiB — bytes that the next <code>pread</code> immediately overwrote. Two of every five read-path instructions were spent on a <code>memset</code> that was thrown away, plus ~6% more in per-lookup malloc / free.</p>
-        <h3>The fix</h3>
-        <p>A reused <code>thread_local</code> block buffer (per-thread, so the concurrent read path stays race-free) and a <code>PreadInto</code> that skips the zero-fill. The buffer grows only when a larger block than any seen appears — after warmup, never.</p>
-      </div>
-      <div class="compare">
-        <div class="cmp">
-          <div class="ct">read-loop instructions (callgrind)</div>
-          <div class="cmp-bars">
-            <div class="cmp-row"><span class="cl">before</span><span class="cmp-track"><span class="cmp-fill before" style="width:100%"></span></span><span class="cv">394.5 M</span></div>
-            <div class="cmp-row"><span class="cl">after</span><span class="cmp-track"><span class="cmp-fill after" style="width:52%"></span></span><span class="cv">205.7 M</span></div>
-          </div>
-          <span class="delta good">−48% instructions · memset gone</span>
-        </div>
-        <div class="cmp">
-          <div class="ct">read throughput (wall clock, median)</div>
-          <div class="cmp-bars">
-            <div class="cmp-row"><span class="cl">before</span><span class="cmp-track"><span class="cmp-fill before" style="width:84%"></span></span><span class="cv">896 K/s</span></div>
-            <div class="cmp-row"><span class="cl">after</span><span class="cmp-track"><span class="cmp-fill after" style="width:100%"></span></span><span class="cv">1.07 M/s</span></div>
-          </div>
-          <span class="delta good">+19% throughput · p99 1.7 → 1.3 µs · far less jitter</span>
+  <div class="pipe">
+    <div class="pipe-row">
+      <div class="pipe-step">1</div>
+      <div class="pipe-body">
+        <div class="pipe-name">Write-ahead log</div>
+        <div class="pipe-desc">
+          Each mutation is appended as a CRC32-framed record and
+          <code>fsync</code>ed <em>before</em> the memtable is touched, so a crash
+          never loses an acknowledged write. On open the log is replayed; a torn
+          or corrupt tail record is detected by CRC and truncated.
         </div>
       </div>
     </div>
-  </section>
-
-  <section>
-    <div class="sec-head">
-      <span class="label">design decisions</span>
-      <h2>Every layer is a defended tradeoff</h2>
-      <p>The full reasoning is in the design doc; each choice was made to be explained without notes.</p>
-    </div>
-    <div class="cards">
-      <div class="card"><h3>Skip list <span class="over">over balanced tree</span></h3><p>No rotations to get right, and inserts touch only the search path — the property that makes lock-free single-writer / multi-reader possible.</p></div>
-      <div class="card"><h3>fsync-per-write <span class="over">over group commit</span></h3><p>The strongest, simplest durability guarantee. The cost is write throughput, which the benchmark quantifies and group commit would recover.</p></div>
-      <div class="card"><h3>Atomic manifest <span class="over">via write-temp + rename</span></h3><p>rename is atomic on POSIX, so a torn manifest is unrepresentable — no checksum needed. The manifest commit is the single durability point.</p></div>
-      <div class="card"><h3>Immutable snapshot <span class="over">over shared_mutex</span></h3><p>Reads copy a reference-counted table-set pointer and run lock-free; a compaction can swap and delete files without ever breaking an in-flight read.</p></div>
-      <div class="card"><h3>Size-tiered <span class="over">over leveled compaction</span></h3><p>Lower write amplification and far simpler to implement correctly; it accepts higher transient space, the right call at single-node scope.</p></div>
-      <div class="card"><h3>Bloom filter <span class="over">from scratch</span></h3><p>Bit array + k probes via double hashing; a miss goes from one block read per table to ~fpr. FPR is a build parameter — measured 1.08% at the 1% target.</p></div>
-    </div>
-  </section>
-
-  <section>
-    <div class="two-col">
-      <div class="listcol">
-        <span class="label">honest scope</span>
-        <h3>Limitations</h3>
-        <ul class="clean">
-          <li><span class="mk">·</span><span><b>Single node, single writer</b> — writes serialize under a mutex; reads are concurrent.</span></li>
-          <li><span class="mk">·</span><span><b>Point lookups only</b> — no range scans yet.</span></li>
-          <li><span class="mk">·</span><span><b>No transactions, MVCC, or compression.</b></span></li>
-          <li><span class="mk">·</span><span><b>Synchronous flush</b> — a large flush briefly stalls writers.</span></li>
-          <li><span class="mk">·</span><span><b>Orphaned SSTables leak</b> after an interrupted compaction (ignored, not deleted).</span></li>
-        </ul>
-      </div>
-      <div class="listcol">
-        <span class="label">understood, descoped</span>
-        <h3>What I'd build next</h3>
-        <ul class="clean next">
-          <li><span class="mk">→</span><span><b>Group commit</b> — batch many writers into one fsync; the measured write bottleneck.</span></li>
-          <li><span class="mk">→</span><span><b>Range scans</b> — a merge iterator across memtable + SSTables (the scan iterator already exists).</span></li>
-          <li><span class="mk">→</span><span><b>Leveled compaction</b> — trade write amplification for much lower space amplification.</span></li>
-          <li><span class="mk">→</span><span><b>Snapshot reads / MVCC</b> — sequence-numbered keys pinning a consistent version.</span></li>
-          <li><span class="mk">→</span><span><b>Async flush</b> — freeze the memtable and flush off-thread so writes never stall.</span></li>
-        </ul>
+    <div class="pipe-row">
+      <div class="pipe-step">2</div>
+      <div class="pipe-body">
+        <div class="pipe-name">Memtable — a hand-written skip list</div>
+        <div class="pipe-desc">
+          Ordered, tombstone-aware, with memory accounting driving the flush
+          threshold. Inserts touch only the search path, which is what makes
+          single-writer / multi-reader access viable without locking readers out.
+        </div>
       </div>
     </div>
-  </section>
+    <div class="pipe-row">
+      <div class="pipe-step">3</div>
+      <div class="pipe-body">
+        <div class="pipe-name">SSTable flush</div>
+        <div class="pipe-desc">
+          Past its size threshold the memtable is written out as an immutable
+          table: sorted data blocks, a sparse one-entry-per-block index, a bloom
+          filter, and a fixed 40-byte footer. The manifest is then updated by
+          atomic rename — the single durability point — and the log is rotated.
+        </div>
+      </div>
+    </div>
+    <div class="pipe-row">
+      <div class="pipe-step">4</div>
+      <div class="pipe-body">
+        <div class="pipe-name">Reads</div>
+        <div class="pipe-desc">
+          Memtable first, then tables newest to oldest, stopping at the first hit
+          or tombstone. Each table's bloom filter lets a lookup skip a table that
+          cannot hold the key, turning a miss from one block read per table into
+          roughly <em>fpr</em> block reads.
+        </div>
+      </div>
+    </div>
+    <div class="pipe-row">
+      <div class="pipe-step">5</div>
+      <div class="pipe-body">
+        <div class="pipe-name">Background compaction</div>
+        <div class="pipe-desc">
+          One background thread k-way-merges similarly sized tables, dropping
+          shadowed values and safe tombstones. Readers take a reference-counted
+          immutable snapshot of the table set, so compaction never blocks or
+          breaks an in-flight read — verified under ThreadSanitizer.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
-  <section>
-    <div class="sec-head" style="margin-bottom: 18px;">
-      <span class="label">engineering rigor</span>
-      <h2>Green by construction</h2>
+<section>
+  <h2>Benchmarks</h2>
+
+  <div class="note">
+    <div class="note-title">How these were measured</div>
+    <ul>
+      <li><strong>Machine:</strong> Intel Xeon @ 2.80 GHz, 4 vCPU, 16 GB RAM,
+          Ubuntu 24.04, ext4 — a <strong>KVM guest</strong>, not bare metal.</li>
+      <li><strong>Method:</strong> 50,000 operations per workload, 100,000-key
+          set, 16-byte keys, 100-byte values, 4 MiB flush threshold, seed 42.
+          Every workload runs <strong>3 trials and the median is reported</strong>;
+          the bars below span min to max so run-to-run noise is visible.</li>
+      <li><strong>Reads are CPU-bound, not disk-bound.</strong> The working set is
+          about 12 MB on a 16 GB machine, so after the warm-up pass it is entirely
+          in page cache. These numbers measure the lookup path — bloom probe,
+          index binary search, block parse, one <code>pread</code> — not the
+          storage device.</li>
+      <li><strong>Writes are fsync-bound,</strong> so their throughput is a
+          property of the host's storage, not of the engine. On a different VM
+          instance the same binary measured 1,556 ops/s with a 595 µs p50; here
+          it is 5,311 ops/s at 176 µs. In both cases <em>p50 ≈ one fsync</em> —
+          that invariant is the real result, not the absolute number.</li>
+      <li>Single-threaded client; each operation timed individually with
+          <code>steady_clock</code>. Raw JSON is committed in the repo.</li>
+    </ul>
+  </div>
+
+  <div class="chart">
+    <div class="chart-title">Throughput by workload</div>
+    <div class="chart-sub">
+      Read and write paths differ by roughly 100×, so each gets its own linear
+      scale — a shared log axis would make bar length lie.
     </div>
-    <div class="tiles">
-      <div class="tile"><div class="v num">74</div><div class="k">tests, incl. crash-recovery & FPR</div></div>
-      <div class="tile"><div class="v num">3</div><div class="k">sanitizers — ASan · UBSan · TSan</div></div>
-      <div class="tile"><div class="v num">9</div><div class="k">milestones, each green before the next</div></div>
-      <div class="tile"><div class="v num">0</div><div class="k">third-party deps in the engine</div></div>
+
+    <div class="legend">
+      <span><i class="dot" style="background:var(--read)"></i> read path</span>
+      <span><i class="dot" style="background:var(--write)"></i> write path</span>
     </div>
-  </section>
-</main>
+
+    <div class="bar-row">
+      <div class="bar-head">
+        <span class="bar-name">read-random-zipfian</span>
+        <span class="bar-value">851,974 ops/s</span>
+      </div>
+      <div class="bar-track"><i class="bar-fill fill-read" style="width:85.2%"></i></div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-head">
+        <span class="bar-name">read-random-uniform</span>
+        <span class="bar-value">763,024 ops/s</span>
+      </div>
+      <div class="bar-track"><i class="bar-fill fill-read" style="width:76.3%"></i></div>
+    </div>
+    <div class="axis"><span>0</span><span>1,000,000 ops/s</span></div>
+  </div>
+
+  <div class="chart">
+    <div class="bar-row">
+      <div class="bar-head">
+        <span class="bar-name">mixed-50-50</span>
+        <span class="bar-value">10,998 ops/s</span>
+      </div>
+      <div class="bar-track"><i class="bar-fill fill-write" style="width:91.6%"></i></div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-head">
+        <span class="bar-name">fill-random</span>
+        <span class="bar-value">5,375 ops/s</span>
+      </div>
+      <div class="bar-track"><i class="bar-fill fill-write" style="width:44.8%"></i></div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-head">
+        <span class="bar-name">fill-sequential</span>
+        <span class="bar-value">5,311 ops/s</span>
+      </div>
+      <div class="bar-track"><i class="bar-fill fill-write" style="width:44.3%"></i></div>
+    </div>
+    <div class="axis"><span>0</span><span>12,000 ops/s</span></div>
+  </div>
+
+  <h3>Latency, including the tail</h3>
+  <p>
+    Median throughput is the easy half. The interesting column is p99.9, where
+    the engine's two known stalls show up.
+  </p>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>workload</th><th>ops/sec</th><th>trials min–max</th>
+          <th>p50 <span class="unit">µs</span></th><th>p95 <span class="unit">µs</span></th>
+          <th>p99 <span class="unit">µs</span></th><th>p99.9 <span class="unit">µs</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>fill-sequential</td><td>5,311</td><td>5,217–5,644</td>
+            <td>176.35</td><td>285.14</td><td>456.52</td><td>627.72</td></tr>
+        <tr><td>fill-random</td><td>5,375</td><td>5,175–5,426</td>
+            <td>172.35</td><td>290.71</td><td>430.14</td><td>702.70</td></tr>
+        <tr><td>read-random-uniform</td><td>763,024</td><td>745,305–768,018</td>
+            <td>1.12</td><td>1.78</td><td>2.51</td><td>30.81</td></tr>
+        <tr><td>read-random-zipfian</td><td>851,974</td><td>811,294–869,776</td>
+            <td>0.87</td><td>1.58</td><td>2.51</td><td>28.00</td></tr>
+        <tr><td>mixed-50-50</td><td>10,998</td><td>9,965–11,138</td>
+            <td>31.38</td><td>227.12</td><td>353.06</td><td>495.21</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    Two tail effects are visible and both are explained rather than hidden.
+    Reads sit at 2.5 µs through p99 but jump to <strong>~30 µs at p99.9</strong>
+    — background compaction and scheduler preemption on a 4-vCPU guest. And the
+    worst single write in a fill run is <strong>~34 ms</strong>: that is a
+    memtable flush running synchronously under the write lock, which is exactly
+    the limitation named below. An async flush is the fix, and the benchmark is
+    what makes the cost concrete.
+  </p>
+  <p>
+    Zipfian reads beat uniform reads (852k vs 763k) because a skewed key
+    distribution keeps the hot blocks and skip-list nodes in cache — the result
+    you'd expect if the benchmark is measuring something real.
+  </p>
+</section>
+
+<section>
+  <h2>The profiling win</h2>
+  <p>
+    Profiling the read path with callgrind found one dominant hotspot:
+    <code>SSTableReader::Get</code> allocated a fresh block buffer per lookup, and
+    <code>resize()</code> zero-filled about 4 KiB that <code>pread</code> then
+    immediately overwrote. Nearly half of all read-loop instructions were spent on
+    a <code>memset</code> whose result was thrown away.
+  </p>
+  <p>
+    The fix was a reused <code>thread_local</code> block buffer plus a
+    <code>PreadInto</code> that skips the zero-fill.
+  </p>
+
+  <div class="delta">
+    <span class="delta-num">−51%</span>
+    <span class="delta-text">
+      instructions in the read loop — 372.6M → 182.1M<br>
+      measured by callgrind, which counts instructions deterministically
+    </span>
+  </div>
+
+  <div class="chart">
+    <div class="chart-title">Read-loop instructions</div>
+    <div class="chart-sub">
+      Same machine, same harness, two builds differing only in
+      <code>src/sstable.cpp</code>.
+    </div>
+    <div class="bar-row">
+      <div class="bar-head">
+        <span class="bar-name">before — buffer allocated and zero-filled per lookup</span>
+        <span class="bar-value">372.6M</span>
+      </div>
+      <div class="bar-track"><i class="bar-fill fill-muted" style="width:100%"></i></div>
+    </div>
+    <div class="bar-row">
+      <div class="bar-head">
+        <span class="bar-name">after — reused thread_local buffer</span>
+        <span class="bar-value">182.1M</span>
+      </div>
+      <div class="bar-track"><i class="bar-fill fill-read" style="width:48.9%"></i></div>
+    </div>
+  </div>
+
+  <h3>Why the number is trustworthy</h3>
+  <p>
+    The instruction count is deterministic and hardware-independent — rerunning it
+    gives the same answer on any machine, which is why it is the headline rather
+    than a wall-clock figure. The composition of the profile is the corroborating
+    evidence:
+  </p>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>read-loop cost</th><th>before</th><th>after</th><th>change</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>__memset_avx2 (the waste)</td><td>166.5M · 44.7%</td>
+            <td>1.2M · 0.7%</td><td>gone</td></tr>
+        <tr><td>ParseEntry (real work)</td><td>41.6M</td><td>41.6M</td><td>unchanged</td></tr>
+        <tr><td>__memcmp_avx2 (real work)</td><td>35.6M</td><td>35.6M</td><td>unchanged</td></tr>
+        <tr><td>malloc / free traffic</td><td>~21.5M</td><td>~5.1M</td><td>−76%</td></tr>
+        <tr><td>total</td><td>372.6M</td><td>182.1M</td><td>−51%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The two genuine-work entries are <em>identical in absolute terms</em> before
+    and after. Only the overhead disappeared, which is what a real optimisation
+    looks like as opposed to a benchmark that quietly stopped doing the work.
+  </p>
+
+  <h3>What it bought in wall-clock time</h3>
+  <p>
+    On the same machine, five trials each:
+    <strong>620,018 → 710,090 ops/s median (+14.5%)</strong>, p50 1.35 µs → 1.14 µs.
+    The trial ranges do overlap — 574.7k–713.6k before against 634.4k–802.3k after —
+    so the honest reading is that wall-clock gain is real but noisy on a shared
+    vCPU, and the instruction count is the measurement worth quoting.
+  </p>
+
+  <figure>
+    <a href="img/read_before.png">
+      <img src="img/read_before.png" alt="Call graph of the read path before the optimisation, showing a large green memset branch consuming 44.69 percent of instructions">
+    </a>
+    <figcaption>
+      <strong>Before.</strong> The green <code>PreadExact → __memset_avx2</code>
+      branch on the right is 44.69% of read-loop instructions. Click for full
+      resolution.
+    </figcaption>
+  </figure>
+  <figure>
+    <a href="img/read_after.png">
+      <img src="img/read_after.png" alt="Call graph of the read path after the optimisation, with the memset branch absent">
+    </a>
+    <figcaption>
+      <strong>After.</strong> The same path with the buffer reused — the green
+      branch is gone entirely, and what remains is key comparison, block parsing,
+      and bloom probing.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>How it is built and checked</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">Warnings are errors</div>
+      <div class="card-body">
+        Built with <code>-Wall -Wextra -Werror</code> on both gcc and clang, in
+        Debug and Release. clang-tidy and clang-format run in CI on every push.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Every test under sanitizers</div>
+      <div class="card-body">
+        74 tests run under AddressSanitizer and UndefinedBehaviorSanitizer, and —
+        once the compaction thread existed — under ThreadSanitizer, which is what
+        backs the lock-free-read claim rather than an argument that it looks right.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Crash recovery is tested, not asserted</div>
+      <div class="card-body">
+        Recovery tests truncate and corrupt the log at record boundaries and in
+        the middle of records, then assert that every acknowledged write survives
+        and the bad tail is dropped.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Standard library only</div>
+      <div class="card-body">
+        No third-party code in the engine. CRC32 and the bloom filter's double
+        hashing are implemented from scratch; GoogleTest and a matplotlib
+        plotting script are the only outside dependencies, and neither ships in
+        the engine.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Design decisions</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">A <code>Status</code> type, not exceptions</div>
+      <div class="card-body">
+        A storage engine's failures — a short read, a bad CRC — are expected
+        control flow, not exceptional. One uniform <code>Status</code> across the
+        API keeps every failure path visible at the call site.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">A skip list, not a balanced tree</div>
+      <div class="card-body">
+        No rotations to get right, and an insert touches only the search path —
+        the property that makes lock-free single-writer / multi-reader access
+        possible, and the reason it is the industry default here.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Atomic manifest via write-temp + rename</div>
+      <div class="card-body">
+        <code>rename</code> is atomic on POSIX, so a torn manifest is
+        unrepresentable and needs no checksum. The manifest commit is the single
+        durability point for a flush or a compaction.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Immutable snapshot reads, not a shared_mutex</div>
+      <div class="card-body">
+        A read copies a reference-counted snapshot pointer under a brief lock,
+        then reads with no lock held. A concurrent compaction can swap in a new
+        table set and even delete the old files without breaking an in-flight
+        read, because POSIX keeps the inode alive behind the open descriptor.
+        Under a <code>shared_mutex</code> readers would hold a lock across their
+        I/O.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Size-tiered compaction, not leveled</div>
+      <div class="card-body">
+        Lower write amplification and far simpler to implement correctly; it
+        accepts higher transient space amplification, which is the right trade at
+        single-node scope. Leveled is the answer when disk is the binding
+        constraint.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">fsync on every write</div>
+      <div class="card-body">
+        The strongest and simplest durability guarantee. The cost is throughput,
+        which the benchmark quantifies rather than hides — and group commit is
+        the known remedy.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Limitations</h2>
+  <p>Stated plainly, because a storage engine with no listed limitations is one that has not been measured.</p>
+  <ul class="plain">
+    <li><strong>Single node</strong> — no replication, sharding, or distribution.</li>
+    <li><strong>Single writer</strong> — writes serialize under a mutex; reads are concurrent.</li>
+    <li><strong>Point lookups only</strong> — no range scans or user-facing iterators yet.</li>
+    <li><strong>No transactions, MVCC, or snapshot reads.</strong></li>
+    <li><strong>No compression</strong>, and size-tiered compaction only.</li>
+    <li><strong>Synchronous flush</strong> — a flush runs under the write lock, which is the ~34 ms worst-case write visible in the table above.</li>
+    <li><strong>Orphaned SSTables leak</strong> — a table written by a flush or compaction that crashed before its manifest commit is correctly ignored on restart, but never deleted.</li>
+  </ul>
+
+  <h3>What I would build next</h3>
+  <ul class="plain">
+    <li><strong>Group commit</strong> — batch many writers' records into one <code>write</code> + <code>fsync</code>. This is the measured write bottleneck, so it is first.</li>
+    <li><strong>Range scans</strong> — the per-table ordered iterator already exists for compaction; this is a k-way merge with tombstone shadowing exposed as API.</li>
+    <li><strong>Leveled compaction</strong> — trade write amplification for much lower space amplification.</li>
+    <li><strong>Async flush</strong> — freeze the full memtable and flush it off the write lock, removing the tail stall above.</li>
+    <li><strong>Snapshot reads / MVCC</strong> — tag keys with a sequence number, formalising the internal immutable snapshot into a user-visible one.</li>
+  </ul>
+</section>
 
 <footer>
-  <div class="wrap foot-inner">
-    <span class="mono">lsm-storage-engine — C++20, standard library only</span>
-    <a class="mono" href="https://github.com/aayushhks/lsm-storage-engine" target="_blank" rel="noopener">github.com/aayushhks/lsm-storage-engine →</a>
-  </div>
+  Built in C++20 with CMake and GoogleTest ·
+  <a href="https://github.com/aayushhks/lsm-storage-engine">github.com/aayushhks/lsm-storage-engine</a><br>
+  All figures on this page were produced by the committed benchmark harness and
+  profiling scripts, on the machine described above.
 </footer>
+
+</div>
 </body>
 </html>
