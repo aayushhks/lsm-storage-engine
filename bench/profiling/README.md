@@ -9,12 +9,25 @@ which is deterministic and needs no kernel perf access.
 
 - `read_before.png` — call-graph of the sstable-backed read path before the fix.
   The bright green branch `SSTableReader::Get → PreadExact → __memset_avx2` at
-  ~42% is the hotspot: a per-lookup block buffer that `resize()` zero-fills right
-  before `pread` overwrites it.
+  **44.69%** is the hotspot: a per-lookup block buffer that `resize()` zero-fills
+  right before `pread` overwrites it.
 - `read_after.png` — the same path after switching to a reused `thread_local`
-  buffer and a `PreadInto` that skips the zero-fill. The memset branch is gone;
-  the read loop is 48% fewer instructions and dominated by real work (`memcmp`,
-  `ParseEntry`, bloom probing).
+  buffer and a `PreadInto` that skips the zero-fill. The memset branch is gone
+  (0.66%); the read loop is **51% fewer instructions** (372.6M → 182.1M) and
+  dominated by real work (`memcmp`, `ParseEntry`, bloom probing).
+
+Both profiles were produced on the same machine from two builds of the same tree
+differing only in `src/sstable.cpp`, so the delta is attributable to that change
+alone. `ParseEntry` (41.6M) and `__memcmp_avx2` (35.6M) are unchanged in absolute
+terms across the pair — only the overhead disappeared.
+
+To reproduce the "before" build, reverse the optimization commit on a scratch
+worktree and rebuild:
+
+```sh
+git worktree add /tmp/before HEAD --detach
+git -C /tmp/before revert --no-commit $(git log --format=%H --grep='per-thread block buffer')
+```
 
 ## reproduce the callgrind profile
 
