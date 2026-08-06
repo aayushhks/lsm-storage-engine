@@ -1,10 +1,7 @@
-Hardware: Intel(R) Xeon(R) Processor @ 2.10GHz · 4 cores · Ubuntu 24.04.4 LTS, 16461176 kB.
-Config: 50000 ops/workload, 100000 keys, 100-byte values, 16-byte keys, flush at 4194304 bytes.
-
-| workload | ops/sec | p50 (us) | p95 (us) | p99 (us) |
-|---|---:|---:|---:|---:|
-| fill-sequential | 1,556 | 595.57 | 937.54 | 1227.50 |
-| fill-random | 1,533 | 614.08 | 929.50 | 1190.85 |
-| read-random-uniform | 738,001 | 1.08 | 2.05 | 3.80 |
-| read-random-zipfian | 935,160 | 0.78 | 1.32 | 2.46 |
-| mixed-50-50 | 2,897 | 28.61 | 864.14 | 1726.27 |
+| workload | ops/sec (median) | trials min–max | p50 (µs) | p95 (µs) | p99 (µs) | p99.9 (µs) |
+|---|---:|---:|---:|---:|---:|---:|
+| fill-sequential | 5,311 | 5,217–5,644 | 176.35 | 285.14 | 456.52 | 627.72 |
+| fill-random | 5,375 | 5,175–5,426 | 172.35 | 290.71 | 430.14 | 702.70 |
+| read-random-uniform | 763,024 | 745,305–768,018 | 1.12 | 1.78 | 2.51 | 30.81 |
+| read-random-zipfian | 851,974 | 811,294–869,776 | 0.87 | 1.58 | 2.51 | 28.00 |
+| mixed-50-50 | 10,998 | 9,965–11,138 | 31.38 | 227.12 | 353.06 | 495.21 |

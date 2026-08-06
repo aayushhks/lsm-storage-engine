@@ -1,9 +1,10 @@
 {
   "machine": {
-    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.80GHz",
     "cores": 4,
-    "mem_total": "16461176 kB",
-    "os": "Ubuntu 24.04.4 LTS"
+    "mem_total": "16460996 kB",
+    "os": "Ubuntu 24.04.4 LTS",
+    "virtualized": true
   },
   "config": {
     "num_ops": 50000,
@@ -12,53 +13,79 @@
     "value_size": 100,
     "flush_threshold_bytes": 4194304,
     "zipfian_skew": 0.99,
+    "trials": 3,
     "seed": 42
   },
   "results": [
     {
       "workload": "fill-sequential",
       "num_ops": 50000,
-      "seconds": 32.1322,
-      "ops_per_sec": 1556.07,
-      "p50_us": 595.572,
-      "p95_us": 937.543,
-      "p99_us": 1227.5
+      "seconds": 9.41398,
+      "ops_per_sec": 5311.25,
+      "trials": 3,
+      "ops_per_sec_min": 5217.32,
+      "ops_per_sec_max": 5644.5,
+      "p50_us": 176.355,
+      "p95_us": 285.143,
+      "p99_us": 456.519,
+      "p999_us": 627.723,
+      "max_us": 33829.9
     },
     {
       "workload": "fill-random",
       "num_ops": 50000,
-      "seconds": 32.6193,
-      "ops_per_sec": 1532.83,
-      "p50_us": 614.082,
-      "p95_us": 929.502,
-      "p99_us": 1190.85
+      "seconds": 9.30244,
+      "ops_per_sec": 5374.94,
+      "trials": 3,
+      "ops_per_sec_min": 5175.09,
+      "ops_per_sec_max": 5426.24,
+      "p50_us": 172.349,
+      "p95_us": 290.714,
+      "p99_us": 430.142,
+      "p999_us": 702.702,
+      "max_us": 38520.4
     },
     {
       "workload": "read-random-uniform",
       "num_ops": 50000,
-      "seconds": 0.0677505,
-      "ops_per_sec": 738001,
-      "p50_us": 1.078,
-      "p95_us": 2.049,
-      "p99_us": 3.797
+      "seconds": 0.0655288,
+      "ops_per_sec": 763024,
+      "trials": 3,
+      "ops_per_sec_min": 745305,
+      "ops_per_sec_max": 768018,
+      "p50_us": 1.116,
+      "p95_us": 1.778,
+      "p99_us": 2.511,
+      "p999_us": 30.813,
+      "max_us": 59.412
     },
     {
       "workload": "read-random-zipfian",
       "num_ops": 50000,
-      "seconds": 0.0534668,
-      "ops_per_sec": 935160,
-      "p50_us": 0.78,
-      "p95_us": 1.325,
-      "p99_us": 2.455
+      "seconds": 0.0586872,
+      "ops_per_sec": 851974,
+      "trials": 3,
+      "ops_per_sec_min": 811294,
+      "ops_per_sec_max": 869776,
+      "p50_us": 0.874,
+      "p95_us": 1.58,
+      "p99_us": 2.507,
+      "p999_us": 27.998,
+      "max_us": 55.413
     },
     {
       "workload": "mixed-50-50",
       "num_ops": 50000,
-      "seconds": 17.2568,
-      "ops_per_sec": 2897.41,
-      "p50_us": 28.614,
-      "p95_us": 864.143,
-      "p99_us": 1726.27
+      "seconds": 4.54613,
+      "ops_per_sec": 10998.4,
+      "trials": 3,
+      "ops_per_sec_min": 9964.91,
+      "ops_per_sec_max": 11137.7,
+      "p50_us": 31.384,
+      "p95_us": 227.115,
+      "p99_us": 353.064,
+      "p999_us": 495.21,
+      "max_us": 3029.56
     }
   ]
 }
