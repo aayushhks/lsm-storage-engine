@@ -3,38 +3,37 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="A single-node log-structured merge-tree key-value store written from scratch in C++20 — WAL, SSTables, bloom filters, and background compaction, benchmarked and profiled.">
-<title>lsm-storage-engine — a C++20 LSM-tree key-value store</title>
+<meta name="description" content="A single-node log-structured merge-tree key-value store written from scratch in C++20, with a write-ahead log, SSTables, bloom filters and background compaction.">
+<title>lsm-storage-engine</title>
 <style>
   :root {
     color-scheme: light;
-    --surface:      #fcfcfb;
-    --surface-2:    #f5f4f1;
-    --ink:          #0b0b0b;
-    --ink-2:        #52514e;
-    --ink-3:        #7a7873;
-    --rule:         #e3e2df;
-    --read:         #2a78d6;
-    --write:        #eb6834;
-    --track:        #eceae6;
+    --surface:   #fcfcfb;
+    --surface-2: #f5f4f1;
+    --ink:       #0b0b0b;
+    --ink-2:     #52514e;
+    --ink-3:     #7a7873;
+    --rule:      #e3e2df;
+    --read:      #2a78d6;
+    --write:     #eb6834;
+    --track:     #eceae6;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       color-scheme: dark;
-      --surface:      #1a1a19;
-      --surface-2:    #232322;
-      --ink:          #ffffff;
-      --ink-2:        #c3c2b7;
-      --ink-3:        #8f8e86;
-      --rule:         #383835;
-      --read:         #3987e5;
-      --write:        #d95926;
-      --track:        #2c2c2a;
+      --surface:   #1a1a19;
+      --surface-2: #232322;
+      --ink:       #ffffff;
+      --ink-2:     #c3c2b7;
+      --ink-3:     #8f8e86;
+      --rule:      #383835;
+      --read:      #3987e5;
+      --write:     #d95926;
+      --track:     #2c2c2a;
     }
   }
 
   * { box-sizing: border-box; }
-
   html { -webkit-text-size-adjust: 100%; }
 
   body {
@@ -43,37 +42,25 @@
     color: var(--ink);
     font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
           "Helvetica Neue", Arial, sans-serif;
-    font-feature-settings: "kern";
     -webkit-font-smoothing: antialiased;
   }
 
-  .wrap { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
 
-  code, .mono, table, .num {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-                 "Liberation Mono", monospace;
-  }
+  code, table { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 
-  /* ---------- header ---------- */
-
-  header { padding: 72px 0 40px; }
+  header { padding: 68px 0 36px; }
 
   h1 {
-    font-size: clamp(28px, 5vw, 38px);
-    line-height: 1.15;
+    font-size: clamp(28px, 5vw, 36px);
     letter-spacing: -0.02em;
     margin: 0 0 14px;
     font-weight: 620;
   }
 
-  .lede {
-    font-size: clamp(16px, 2.2vw, 18px);
-    color: var(--ink-2);
-    margin: 0 0 26px;
-    max-width: 62ch;
-  }
+  .lede { font-size: 17px; color: var(--ink-2); margin: 0 0 24px; max-width: 60ch; }
 
-  .links { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .links { display: flex; flex-wrap: wrap; gap: 10px; }
 
   .btn {
     display: inline-block;
@@ -83,38 +70,24 @@
     color: var(--ink);
     text-decoration: none;
     font-size: 14px;
-    transition: border-color .15s ease, background .15s ease;
   }
   .btn:hover { border-color: var(--read); background: var(--surface-2); }
   .btn-primary { background: var(--read); border-color: var(--read); color: #fff; }
-  .btn-primary:hover { background: var(--read); opacity: .9; color: #fff; }
-
-  /* ---------- stat row ---------- */
 
   .stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
     gap: 1px;
     background: var(--rule);
     border: 1px solid var(--rule);
     border-radius: 10px;
     overflow: hidden;
-    margin: 0 0 8px;
   }
-  .stat { background: var(--surface); padding: 18px 18px 16px; }
-  .stat-value {
-    font-size: 25px;
-    letter-spacing: -0.02em;
-    line-height: 1.1;
-    font-weight: 600;
-    margin-bottom: 5px;
-  }
-  .stat-label { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
-  .stat-note { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
+  .stat { background: var(--surface); padding: 17px 18px; }
+  .stat-value { font-size: 25px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .stat-label { font-size: 12.5px; color: var(--ink-2); }
 
-  /* ---------- sections ---------- */
-
-  section { padding: 46px 0 0; }
+  section { padding: 44px 0 0; }
 
   h2 {
     font-size: 13px;
@@ -122,168 +95,92 @@
     letter-spacing: 0.09em;
     color: var(--ink-3);
     font-weight: 600;
-    margin: 0 0 20px;
+    margin: 0 0 18px;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--rule);
   }
 
-  h3 {
-    font-size: 16.5px;
-    font-weight: 600;
-    margin: 30px 0 10px;
-    letter-spacing: -0.01em;
-  }
+  h3 { font-size: 16px; font-weight: 600; margin: 28px 0 10px; }
 
-  p { margin: 0 0 14px; color: var(--ink-2); max-width: 68ch; }
+  p { margin: 0 0 14px; color: var(--ink-2); max-width: 66ch; }
   p strong, li strong { color: var(--ink); font-weight: 600; }
   a { color: var(--read); }
 
-  /* ---------- pipeline ---------- */
-
-  .pipe { margin: 4px 0 8px; }
-  .pipe-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    padding: 13px 0;
-    border-bottom: 1px solid var(--rule);
-  }
-  .pipe-row:last-child { border-bottom: 0; }
-  .pipe-step {
-    flex: 0 0 26px;
-    height: 26px;
-    border-radius: 50%;
+  .step { display: flex; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .step:last-child { border-bottom: 0; }
+  .step-n {
+    flex: 0 0 25px; height: 25px; border-radius: 50%;
     border: 1px solid var(--rule);
-    display: grid;
-    place-items: center;
-    font-size: 11.5px;
-    color: var(--ink-3);
-    margin-top: 1px;
+    display: grid; place-items: center;
+    font-size: 11.5px; color: var(--ink-3);
   }
-  .pipe-body { flex: 1; min-width: 0; }
-  .pipe-name { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
-  .pipe-desc { color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
+  .step-b { flex: 1; min-width: 0; }
+  .step-t { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+  .step-d { color: var(--ink-2); font-size: 14.5px; line-height: 1.55; }
 
-  /* ---------- charts ---------- */
-
-  .chart { margin: 22px 0 6px; }
-  .chart-title { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
-  .chart-sub { font-size: 12.5px; color: var(--ink-3); margin-bottom: 15px; }
-
-  .bar-row { margin-bottom: 15px; }
-  .bar-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 12px;
-    margin-bottom: 6px;
-  }
+  .bar-row { margin-bottom: 14px; }
+  .bar-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
   .bar-name { font-size: 13.5px; color: var(--ink-2); }
-  .bar-value { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; }
-  .bar-track {
-    height: 9px;
-    background: var(--track);
-    border-radius: 5px;
-    overflow: hidden;
-  }
+  .bar-value { font-size: 13.5px; font-weight: 600; }
+  .bar-track { height: 9px; background: var(--track); border-radius: 5px; overflow: hidden; }
   .bar-fill { display: block; height: 100%; border-radius: 5px; }
-  .fill-read  { background: var(--read); }
+  .fill-read { background: var(--read); }
   .fill-write { background: var(--write); }
   .fill-muted { background: var(--ink-3); }
 
   .axis {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11.5px;
-    color: var(--ink-3);
-    margin-top: 9px;
-    padding-top: 7px;
-    border-top: 1px solid var(--rule);
+    display: flex; justify-content: space-between;
+    font-size: 11.5px; color: var(--ink-3);
+    margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--rule);
   }
 
-  .legend {
-    display: flex;
-    gap: 18px;
-    font-size: 12.5px;
-    color: var(--ink-2);
-    margin-bottom: 16px;
-  }
+  .legend { display: flex; gap: 18px; font-size: 12.5px; color: var(--ink-2); margin-bottom: 15px; }
   .legend span { display: inline-flex; align-items: center; gap: 7px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: block; }
 
-  /* ---------- tables ---------- */
-
-  .scroll { overflow-x: auto; margin: 18px 0 6px; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 520px; }
+  .scroll { overflow-x: auto; margin: 16px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 500px; }
   th, td { text-align: right; padding: 9px 10px; border-bottom: 1px solid var(--rule); }
   th:first-child, td:first-child { text-align: left; }
   th {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--ink-3);
-    font-weight: 600;
-    white-space: nowrap;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--ink-3); font-weight: 600; white-space: nowrap;
   }
-  /* Units stay lowercase: uppercasing "µs" yields "ΜS", which reads as ms. */
+  /* Units stay lowercase, because uppercasing "µs" gives "ΜS" and reads as ms. */
   th .unit { text-transform: none; letter-spacing: 0; }
   td { color: var(--ink-2); }
   td:first-child { color: var(--ink); }
   tbody tr:last-child td { border-bottom: 0; }
 
-  /* ---------- note ---------- */
-
   .note {
     background: var(--surface-2);
     border: 1px solid var(--rule);
     border-radius: 9px;
-    padding: 16px 18px;
+    padding: 15px 18px;
     font-size: 13.5px;
     color: var(--ink-2);
-    margin: 18px 0;
-  }
-  .note-title {
-    font-size: 11.5px;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    color: var(--ink-3);
-    font-weight: 600;
-    margin-bottom: 8px;
+    margin: 16px 0;
   }
   .note ul { margin: 0; padding-left: 18px; }
   .note li { margin-bottom: 5px; line-height: 1.55; }
   .note li:last-child { margin-bottom: 0; }
 
-  /* ---------- delta / profiling ---------- */
-
-  .delta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 12px;
-    margin: 4px 0 18px;
-  }
-  .delta-num {
-    font-size: 44px;
-    font-weight: 620;
-    letter-spacing: -0.03em;
-    line-height: 1;
-    color: var(--read);
-  }
+  .delta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; margin: 6px 0 16px; }
+  .delta-num { font-size: 42px; font-weight: 620; letter-spacing: -0.03em; color: var(--read); }
   .delta-text { font-size: 14px; color: var(--ink-2); }
 
-  /* ---------- cards ---------- */
-
-  .cards { display: grid; gap: 1px; background: var(--rule);
-           border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
-  .card { background: var(--surface); padding: 17px 19px; }
-  .card-title { font-weight: 600; font-size: 14.5px; margin-bottom: 5px; }
-  .card-body { font-size: 13.5px; color: var(--ink-2); line-height: 1.6; }
+  .cards {
+    display: grid; gap: 1px; background: var(--rule);
+    border: 1px solid var(--rule); border-radius: 10px; overflow: hidden;
+  }
+  .card { background: var(--surface); padding: 16px 18px; }
+  .card-t { font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
+  .card-b { font-size: 13.5px; color: var(--ink-2); line-height: 1.55; }
 
   ul.plain { margin: 0 0 14px; padding-left: 19px; color: var(--ink-2); }
-  ul.plain li { margin-bottom: 7px; line-height: 1.6; max-width: 66ch; }
+  ul.plain li { margin-bottom: 6px; line-height: 1.55; max-width: 64ch; }
 
-  figure { margin: 18px 0; }
+  figure { margin: 16px 0; }
   figure img {
     width: 100%; height: auto; display: block;
     border: 1px solid var(--rule); border-radius: 8px; background: #fff;
@@ -291,11 +188,9 @@
   figcaption { font-size: 12.5px; color: var(--ink-3); margin-top: 8px; }
 
   footer {
-    margin-top: 60px;
-    padding: 26px 0 50px;
+    margin-top: 54px; padding: 24px 0 48px;
     border-top: 1px solid var(--rule);
-    font-size: 13px;
-    color: var(--ink-3);
+    font-size: 13px; color: var(--ink-3);
   }
   footer a { color: var(--ink-2); }
 </style>
@@ -307,14 +202,13 @@
 <header>
   <h1>lsm-storage-engine</h1>
   <p class="lede">
-    A single-node, log-structured merge-tree key-value store written from scratch
-    in C++20 — a write-ahead log with crash recovery, immutable SSTables with a
-    sparse index, per-table bloom filters, and size-tiered background compaction.
-    The engine depends on the standard library only; CRC32 and the bloom hashing
-    are hand-rolled.
+    A single-node key-value store written from scratch in C++20. It has a
+    write-ahead log with crash recovery, immutable SSTables with a sparse index
+    and bloom filters, and size-tiered background compaction. The engine uses
+    only the standard library.
   </p>
   <div class="links">
-    <a class="btn btn-primary" href="https://github.com/aayushhks/lsm-storage-engine">Source on GitHub</a>
+    <a class="btn btn-primary" href="https://github.com/aayushhks/lsm-storage-engine">GitHub</a>
     <a class="btn" href="https://github.com/aayushhks/lsm-storage-engine/blob/main/docs/design.md">Design doc</a>
     <a class="btn" href="https://github.com/aayushhks/lsm-storage-engine/actions/workflows/ci.yml">CI</a>
   </div>
@@ -322,100 +216,82 @@
 
 <div class="stats">
   <div class="stat">
-    <div class="stat-value">763k<span style="font-size:15px;color:var(--ink-3)"> ops/s</span></div>
-    <div class="stat-label">Point reads, single thread</div>
-    <div class="stat-note">p50 1.12 µs · p99 2.51 µs</div>
+    <div class="stat-value">763k</div>
+    <div class="stat-label">reads/sec, one thread</div>
   </div>
   <div class="stat">
-    <div class="stat-value">−51%</div>
-    <div class="stat-label">Read-path instructions cut</div>
-    <div class="stat-note">Profiled, then A/B verified</div>
+    <div class="stat-value">1.12 µs</div>
+    <div class="stat-label">read p50</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value">&minus;51%</div>
+    <div class="stat-label">read instructions cut</div>
   </div>
   <div class="stat">
     <div class="stat-value">74</div>
-    <div class="stat-label">Tests, all green</div>
-    <div class="stat-note">ASan · UBSan · TSan</div>
-  </div>
-  <div class="stat">
-    <div class="stat-value">0</div>
-    <div class="stat-label">Third-party engine deps</div>
-    <div class="stat-note">Standard library only</div>
+    <div class="stat-label">tests, sanitizers clean</div>
   </div>
 </div>
 
 <section>
-  <h2>What it is</h2>
-  <p>
-    An LSM-tree is the write-optimised structure behind RocksDB, Cassandra, and
-    most modern storage layers: writes go to a log and an in-memory sorted
-    structure, which is periodically frozen into an immutable sorted file, and
-    those files are merged in the background. This is that design built end to
-    end — not a wrapper, not a tutorial port.
-  </p>
-  <p>
-    It is <strong>not</strong> a RocksDB competitor. It is a from-scratch engine
-    built to understand and defend every layer, measured honestly on stated
-    hardware with the methodology written down.
-  </p>
+  <h2>How it works</h2>
 
-  <div class="pipe">
-    <div class="pipe-row">
-      <div class="pipe-step">1</div>
-      <div class="pipe-body">
-        <div class="pipe-name">Write-ahead log</div>
-        <div class="pipe-desc">
-          Each mutation is appended as a CRC32-framed record and
-          <code>fsync</code>ed <em>before</em> the memtable is touched, so a crash
-          never loses an acknowledged write. On open the log is replayed; a torn
-          or corrupt tail record is detected by CRC and truncated.
-        </div>
+  <div class="step">
+    <div class="step-n">1</div>
+    <div class="step-b">
+      <div class="step-t">Write-ahead log</div>
+      <div class="step-d">
+        Every write is appended to a CRC32 framed log and fsynced before the
+        memtable changes, so a crash never loses an acknowledged write. On open
+        the log is replayed, and a corrupt tail record is detected and dropped.
       </div>
     </div>
-    <div class="pipe-row">
-      <div class="pipe-step">2</div>
-      <div class="pipe-body">
-        <div class="pipe-name">Memtable — a hand-written skip list</div>
-        <div class="pipe-desc">
-          Ordered, tombstone-aware, with memory accounting driving the flush
-          threshold. Inserts touch only the search path, which is what makes
-          single-writer / multi-reader access viable without locking readers out.
-        </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">2</div>
+    <div class="step-b">
+      <div class="step-t">Memtable</div>
+      <div class="step-d">
+        A hand-written skip list holds recent writes in sorted order and tracks
+        its own memory use to decide when to flush.
       </div>
     </div>
-    <div class="pipe-row">
-      <div class="pipe-step">3</div>
-      <div class="pipe-body">
-        <div class="pipe-name">SSTable flush</div>
-        <div class="pipe-desc">
-          Past its size threshold the memtable is written out as an immutable
-          table: sorted data blocks, a sparse one-entry-per-block index, a bloom
-          filter, and a fixed 40-byte footer. The manifest is then updated by
-          atomic rename — the single durability point — and the log is rotated.
-        </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">3</div>
+    <div class="step-b">
+      <div class="step-t">Flush to an SSTable</div>
+      <div class="step-d">
+        A full memtable is written out as an immutable file: sorted data blocks,
+        a sparse index, a bloom filter and a fixed footer. The manifest is then
+        updated by atomic rename, which is the point where the flush becomes
+        durable.
       </div>
     </div>
-    <div class="pipe-row">
-      <div class="pipe-step">4</div>
-      <div class="pipe-body">
-        <div class="pipe-name">Reads</div>
-        <div class="pipe-desc">
-          Memtable first, then tables newest to oldest, stopping at the first hit
-          or tombstone. Each table's bloom filter lets a lookup skip a table that
-          cannot hold the key, turning a miss from one block read per table into
-          roughly <em>fpr</em> block reads.
-        </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">4</div>
+    <div class="step-b">
+      <div class="step-t">Reads</div>
+      <div class="step-d">
+        Check the memtable first, then each table from newest to oldest, stopping
+        at the first hit. Each table's bloom filter lets a lookup skip a table
+        that cannot hold the key.
       </div>
     </div>
-    <div class="pipe-row">
-      <div class="pipe-step">5</div>
-      <div class="pipe-body">
-        <div class="pipe-name">Background compaction</div>
-        <div class="pipe-desc">
-          One background thread k-way-merges similarly sized tables, dropping
-          shadowed values and safe tombstones. Readers take a reference-counted
-          immutable snapshot of the table set, so compaction never blocks or
-          breaks an in-flight read — verified under ThreadSanitizer.
-        </div>
+  </div>
+
+  <div class="step">
+    <div class="step-n">5</div>
+    <div class="step-b">
+      <div class="step-t">Compaction</div>
+      <div class="step-d">
+        A background thread merges similarly sized tables and drops shadowed
+        values. Readers work from an immutable snapshot of the table set, so
+        compaction never blocks a read. This is verified under ThreadSanitizer.
       </div>
     </div>
   </div>
@@ -425,325 +301,216 @@
   <h2>Benchmarks</h2>
 
   <div class="note">
-    <div class="note-title">How these were measured</div>
     <ul>
-      <li><strong>Machine:</strong> Intel Xeon @ 2.80 GHz, 4 vCPU, 16 GB RAM,
-          Ubuntu 24.04, ext4 — a <strong>KVM guest</strong>, not bare metal.</li>
-      <li><strong>Method:</strong> 50,000 operations per workload, 100,000-key
-          set, 16-byte keys, 100-byte values, 4 MiB flush threshold, seed 42.
-          Every workload runs <strong>3 trials and the median is reported</strong>;
-          the bars below span min to max so run-to-run noise is visible.</li>
-      <li><strong>Reads are CPU-bound, not disk-bound.</strong> The working set is
-          about 12 MB on a 16 GB machine, so after the warm-up pass it is entirely
-          in page cache. These numbers measure the lookup path — bloom probe,
-          index binary search, block parse, one <code>pread</code> — not the
-          storage device.</li>
-      <li><strong>Writes are fsync-bound,</strong> so their throughput is a
-          property of the host's storage, not of the engine. On a different VM
-          instance the same binary measured 1,556 ops/s with a 595 µs p50; here
-          it is 5,311 ops/s at 176 µs. In both cases <em>p50 ≈ one fsync</em> —
-          that invariant is the real result, not the absolute number.</li>
-      <li>Single-threaded client; each operation timed individually with
-          <code>steady_clock</code>. Raw JSON is committed in the repo.</li>
+      <li>Intel Xeon 2.80 GHz, 4 vCPU, 16 GB RAM, ext4. This is a virtual
+          machine, not bare metal.</li>
+      <li>50,000 operations per workload, 100,000 keys, 3 trials with the median
+          reported.</li>
+      <li>Reads are CPU bound here. The working set is about 12 MB on a 16 GB
+          machine, so it sits in page cache and these numbers measure the lookup
+          path rather than the disk.</li>
+      <li>Writes are fsync bound, so their speed depends on the host's disk. On a
+          different machine the same binary did 1,556 writes/sec instead of
+          5,311. In both cases p50 is roughly one fsync.</li>
     </ul>
   </div>
 
-  <div class="chart">
-    <div class="chart-title">Throughput by workload</div>
-    <div class="chart-sub">
-      Read and write paths differ by roughly 100×, so each gets its own linear
-      scale — a shared log axis would make bar length lie.
-    </div>
-
-    <div class="legend">
-      <span><i class="dot" style="background:var(--read)"></i> read path</span>
-      <span><i class="dot" style="background:var(--write)"></i> write path</span>
-    </div>
-
-    <div class="bar-row">
-      <div class="bar-head">
-        <span class="bar-name">read-random-zipfian</span>
-        <span class="bar-value">851,974 ops/s</span>
-      </div>
-      <div class="bar-track"><i class="bar-fill fill-read" style="width:85.2%"></i></div>
-    </div>
-    <div class="bar-row">
-      <div class="bar-head">
-        <span class="bar-name">read-random-uniform</span>
-        <span class="bar-value">763,024 ops/s</span>
-      </div>
-      <div class="bar-track"><i class="bar-fill fill-read" style="width:76.3%"></i></div>
-    </div>
-    <div class="axis"><span>0</span><span>1,000,000 ops/s</span></div>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--read)"></i> reads</span>
+    <span><i class="dot" style="background:var(--write)"></i> writes</span>
   </div>
 
-  <div class="chart">
-    <div class="bar-row">
-      <div class="bar-head">
-        <span class="bar-name">mixed-50-50</span>
-        <span class="bar-value">10,998 ops/s</span>
-      </div>
-      <div class="bar-track"><i class="bar-fill fill-write" style="width:91.6%"></i></div>
+  <div class="bar-row">
+    <div class="bar-head">
+      <span class="bar-name">read-random-zipfian</span>
+      <span class="bar-value">851,974 ops/s</span>
     </div>
-    <div class="bar-row">
-      <div class="bar-head">
-        <span class="bar-name">fill-random</span>
-        <span class="bar-value">5,375 ops/s</span>
-      </div>
-      <div class="bar-track"><i class="bar-fill fill-write" style="width:44.8%"></i></div>
-    </div>
-    <div class="bar-row">
-      <div class="bar-head">
-        <span class="bar-name">fill-sequential</span>
-        <span class="bar-value">5,311 ops/s</span>
-      </div>
-      <div class="bar-track"><i class="bar-fill fill-write" style="width:44.3%"></i></div>
-    </div>
-    <div class="axis"><span>0</span><span>12,000 ops/s</span></div>
+    <div class="bar-track"><i class="bar-fill fill-read" style="width:85.2%"></i></div>
   </div>
+  <div class="bar-row">
+    <div class="bar-head">
+      <span class="bar-name">read-random-uniform</span>
+      <span class="bar-value">763,024 ops/s</span>
+    </div>
+    <div class="bar-track"><i class="bar-fill fill-read" style="width:76.3%"></i></div>
+  </div>
+  <div class="axis"><span>0</span><span>1,000,000 ops/s</span></div>
 
-  <h3>Latency, including the tail</h3>
-  <p>
-    Median throughput is the easy half. The interesting column is p99.9, where
-    the engine's two known stalls show up.
-  </p>
+  <div style="height:22px"></div>
+
+  <div class="bar-row">
+    <div class="bar-head">
+      <span class="bar-name">mixed-50-50</span>
+      <span class="bar-value">10,998 ops/s</span>
+    </div>
+    <div class="bar-track"><i class="bar-fill fill-write" style="width:91.6%"></i></div>
+  </div>
+  <div class="bar-row">
+    <div class="bar-head">
+      <span class="bar-name">fill-random</span>
+      <span class="bar-value">5,375 ops/s</span>
+    </div>
+    <div class="bar-track"><i class="bar-fill fill-write" style="width:44.8%"></i></div>
+  </div>
+  <div class="bar-row">
+    <div class="bar-head">
+      <span class="bar-name">fill-sequential</span>
+      <span class="bar-value">5,311 ops/s</span>
+    </div>
+    <div class="bar-track"><i class="bar-fill fill-write" style="width:44.3%"></i></div>
+  </div>
+  <div class="axis"><span>0</span><span>12,000 ops/s</span></div>
 
   <div class="scroll">
     <table>
       <thead>
         <tr>
-          <th>workload</th><th>ops/sec</th><th>trials min–max</th>
+          <th>workload</th><th>ops/sec</th>
           <th>p50 <span class="unit">µs</span></th><th>p95 <span class="unit">µs</span></th>
           <th>p99 <span class="unit">µs</span></th><th>p99.9 <span class="unit">µs</span></th>
         </tr>
       </thead>
       <tbody>
-        <tr><td>fill-sequential</td><td>5,311</td><td>5,217–5,644</td>
-            <td>176.35</td><td>285.14</td><td>456.52</td><td>627.72</td></tr>
-        <tr><td>fill-random</td><td>5,375</td><td>5,175–5,426</td>
-            <td>172.35</td><td>290.71</td><td>430.14</td><td>702.70</td></tr>
-        <tr><td>read-random-uniform</td><td>763,024</td><td>745,305–768,018</td>
-            <td>1.12</td><td>1.78</td><td>2.51</td><td>30.81</td></tr>
-        <tr><td>read-random-zipfian</td><td>851,974</td><td>811,294–869,776</td>
-            <td>0.87</td><td>1.58</td><td>2.51</td><td>28.00</td></tr>
-        <tr><td>mixed-50-50</td><td>10,998</td><td>9,965–11,138</td>
-            <td>31.38</td><td>227.12</td><td>353.06</td><td>495.21</td></tr>
+        <tr><td>read-random-zipfian</td><td>851,974</td><td>0.87</td><td>1.58</td><td>2.51</td><td>28.00</td></tr>
+        <tr><td>read-random-uniform</td><td>763,024</td><td>1.12</td><td>1.78</td><td>2.51</td><td>30.81</td></tr>
+        <tr><td>mixed-50-50</td><td>10,998</td><td>31.38</td><td>227.12</td><td>353.06</td><td>495.21</td></tr>
+        <tr><td>fill-random</td><td>5,375</td><td>172.35</td><td>290.71</td><td>430.14</td><td>702.70</td></tr>
+        <tr><td>fill-sequential</td><td>5,311</td><td>176.35</td><td>285.14</td><td>456.52</td><td>627.72</td></tr>
       </tbody>
     </table>
   </div>
 
   <p>
-    Two tail effects are visible and both are explained rather than hidden.
-    Reads sit at 2.5 µs through p99 but jump to <strong>~30 µs at p99.9</strong>
-    — background compaction and scheduler preemption on a 4-vCPU guest. And the
-    worst single write in a fill run is <strong>~34 ms</strong>: that is a
-    memtable flush running synchronously under the write lock, which is exactly
-    the limitation named below. An async flush is the fix, and the benchmark is
-    what makes the cost concrete.
-  </p>
-  <p>
-    Zipfian reads beat uniform reads (852k vs 763k) because a skewed key
-    distribution keeps the hot blocks and skip-list nodes in cache — the result
-    you'd expect if the benchmark is measuring something real.
+    The tail is where the honest answers live. Reads stay at 2.5 µs through p99
+    but reach about 30 µs at p99.9, which is background compaction and scheduler
+    preemption on a shared vCPU. The worst single write in a fill run is about
+    34 ms, because a memtable flush runs under the write lock. That is a real
+    limitation, listed below, and the benchmark puts a number on it.
   </p>
 </section>
 
 <section>
   <h2>The profiling win</h2>
+
   <p>
-    Profiling the read path with callgrind found one dominant hotspot:
-    <code>SSTableReader::Get</code> allocated a fresh block buffer per lookup, and
-    <code>resize()</code> zero-filled about 4 KiB that <code>pread</code> then
-    immediately overwrote. Nearly half of all read-loop instructions were spent on
+    Callgrind showed one dominant hotspot in the read path.
+    <code>SSTableReader::Get</code> allocated a fresh block buffer on every
+    lookup, and <code>resize()</code> zero filled about 4 KiB that
+    <code>pread</code> then overwrote immediately. Almost half the read loop was
     a <code>memset</code> whose result was thrown away.
   </p>
   <p>
-    The fix was a reused <code>thread_local</code> block buffer plus a
-    <code>PreadInto</code> that skips the zero-fill.
+    The fix was a reused <code>thread_local</code> buffer plus a
+    <code>PreadInto</code> that skips the zero fill.
   </p>
 
   <div class="delta">
-    <span class="delta-num">−51%</span>
+    <span class="delta-num">&minus;51%</span>
     <span class="delta-text">
-      instructions in the read loop — 372.6M → 182.1M<br>
-      measured by callgrind, which counts instructions deterministically
+      read loop instructions, 372.6M down to 182.1M.<br>
+      Callgrind counts instructions exactly, so this reproduces on any machine.
     </span>
   </div>
 
-  <div class="chart">
-    <div class="chart-title">Read-loop instructions</div>
-    <div class="chart-sub">
-      Same machine, same harness, two builds differing only in
-      <code>src/sstable.cpp</code>.
+  <div class="bar-row">
+    <div class="bar-head">
+      <span class="bar-name">before</span>
+      <span class="bar-value">372.6M</span>
     </div>
-    <div class="bar-row">
-      <div class="bar-head">
-        <span class="bar-name">before — buffer allocated and zero-filled per lookup</span>
-        <span class="bar-value">372.6M</span>
-      </div>
-      <div class="bar-track"><i class="bar-fill fill-muted" style="width:100%"></i></div>
-    </div>
-    <div class="bar-row">
-      <div class="bar-head">
-        <span class="bar-name">after — reused thread_local buffer</span>
-        <span class="bar-value">182.1M</span>
-      </div>
-      <div class="bar-track"><i class="bar-fill fill-read" style="width:48.9%"></i></div>
-    </div>
+    <div class="bar-track"><i class="bar-fill fill-muted" style="width:100%"></i></div>
   </div>
-
-  <h3>Why the number is trustworthy</h3>
-  <p>
-    The instruction count is deterministic and hardware-independent — rerunning it
-    gives the same answer on any machine, which is why it is the headline rather
-    than a wall-clock figure. The composition of the profile is the corroborating
-    evidence:
-  </p>
+  <div class="bar-row">
+    <div class="bar-head">
+      <span class="bar-name">after</span>
+      <span class="bar-value">182.1M</span>
+    </div>
+    <div class="bar-track"><i class="bar-fill fill-read" style="width:48.9%"></i></div>
+  </div>
 
   <div class="scroll">
     <table>
       <thead>
-        <tr><th>read-loop cost</th><th>before</th><th>after</th><th>change</th></tr>
+        <tr><th>read loop cost</th><th>before</th><th>after</th></tr>
       </thead>
       <tbody>
-        <tr><td>__memset_avx2 (the waste)</td><td>166.5M · 44.7%</td>
-            <td>1.2M · 0.7%</td><td>gone</td></tr>
-        <tr><td>ParseEntry (real work)</td><td>41.6M</td><td>41.6M</td><td>unchanged</td></tr>
-        <tr><td>__memcmp_avx2 (real work)</td><td>35.6M</td><td>35.6M</td><td>unchanged</td></tr>
-        <tr><td>malloc / free traffic</td><td>~21.5M</td><td>~5.1M</td><td>−76%</td></tr>
-        <tr><td>total</td><td>372.6M</td><td>182.1M</td><td>−51%</td></tr>
+        <tr><td>memset (wasted work)</td><td>166.5M</td><td>1.2M</td></tr>
+        <tr><td>malloc and free</td><td>21.5M</td><td>5.1M</td></tr>
+        <tr><td>ParseEntry (real work)</td><td>41.6M</td><td>41.6M</td></tr>
+        <tr><td>memcmp (real work)</td><td>35.6M</td><td>35.6M</td></tr>
       </tbody>
     </table>
   </div>
 
   <p>
-    The two genuine-work entries are <em>identical in absolute terms</em> before
-    and after. Only the overhead disappeared, which is what a real optimisation
-    looks like as opposed to a benchmark that quietly stopped doing the work.
-  </p>
-
-  <h3>What it bought in wall-clock time</h3>
-  <p>
-    On the same machine, five trials each:
-    <strong>620,018 → 710,090 ops/s median (+14.5%)</strong>, p50 1.35 µs → 1.14 µs.
-    The trial ranges do overlap — 574.7k–713.6k before against 634.4k–802.3k after —
-    so the honest reading is that wall-clock gain is real but noisy on a shared
-    vCPU, and the instruction count is the measurement worth quoting.
+    The two real work rows are identical before and after. Only the waste
+    disappeared, which is what separates a genuine optimisation from a benchmark
+    that quietly stopped doing the work. In wall clock terms it was 620k to 710k
+    ops/sec across five trials, though those ranges overlap on a shared vCPU, so
+    the instruction count is the number worth quoting.
   </p>
 
   <figure>
     <a href="img/read_before.png">
-      <img src="img/read_before.png" alt="Call graph of the read path before the optimisation, showing a large green memset branch consuming 44.69 percent of instructions">
+      <img src="img/read_before.png" alt="Call graph of the read path before the fix, with a large green memset branch">
     </a>
-    <figcaption>
-      <strong>Before.</strong> The green <code>PreadExact → __memset_avx2</code>
-      branch on the right is 44.69% of read-loop instructions. Click for full
-      resolution.
-    </figcaption>
+    <figcaption>Before. The green memset branch on the right is 44.7% of the read loop.</figcaption>
   </figure>
   <figure>
     <a href="img/read_after.png">
-      <img src="img/read_after.png" alt="Call graph of the read path after the optimisation, with the memset branch absent">
+      <img src="img/read_after.png" alt="Call graph of the read path after the fix, with no memset branch">
     </a>
-    <figcaption>
-      <strong>After.</strong> The same path with the buffer reused — the green
-      branch is gone entirely, and what remains is key comparison, block parsing,
-      and bloom probing.
-    </figcaption>
+    <figcaption>After. The branch is gone and what remains is real work.</figcaption>
   </figure>
-</section>
-
-<section>
-  <h2>How it is built and checked</h2>
-  <div class="cards">
-    <div class="card">
-      <div class="card-title">Warnings are errors</div>
-      <div class="card-body">
-        Built with <code>-Wall -Wextra -Werror</code> on both gcc and clang, in
-        Debug and Release. clang-tidy and clang-format run in CI on every push.
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Every test under sanitizers</div>
-      <div class="card-body">
-        74 tests run under AddressSanitizer and UndefinedBehaviorSanitizer, and —
-        once the compaction thread existed — under ThreadSanitizer, which is what
-        backs the lock-free-read claim rather than an argument that it looks right.
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Crash recovery is tested, not asserted</div>
-      <div class="card-body">
-        Recovery tests truncate and corrupt the log at record boundaries and in
-        the middle of records, then assert that every acknowledged write survives
-        and the bad tail is dropped.
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Standard library only</div>
-      <div class="card-body">
-        No third-party code in the engine. CRC32 and the bloom filter's double
-        hashing are implemented from scratch; GoogleTest and a matplotlib
-        plotting script are the only outside dependencies, and neither ships in
-        the engine.
-      </div>
-    </div>
-  </div>
 </section>
 
 <section>
   <h2>Design decisions</h2>
   <div class="cards">
     <div class="card">
-      <div class="card-title">A <code>Status</code> type, not exceptions</div>
-      <div class="card-body">
-        A storage engine's failures — a short read, a bad CRC — are expected
-        control flow, not exceptional. One uniform <code>Status</code> across the
-        API keeps every failure path visible at the call site.
+      <div class="card-t">A Status type instead of exceptions</div>
+      <div class="card-b">
+        A short read or a bad checksum is expected control flow in a storage
+        engine, not an exceptional event. One Status type across the API keeps
+        every failure visible at the call site.
       </div>
     </div>
     <div class="card">
-      <div class="card-title">A skip list, not a balanced tree</div>
-      <div class="card-body">
-        No rotations to get right, and an insert touches only the search path —
-        the property that makes lock-free single-writer / multi-reader access
-        possible, and the reason it is the industry default here.
+      <div class="card-t">A skip list instead of a balanced tree</div>
+      <div class="card-b">
+        There are no rotations to get right, and an insert only touches the
+        search path. That is what makes one writer and many readers workable
+        without locking readers out.
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Atomic manifest via write-temp + rename</div>
-      <div class="card-body">
-        <code>rename</code> is atomic on POSIX, so a torn manifest is
-        unrepresentable and needs no checksum. The manifest commit is the single
-        durability point for a flush or a compaction.
+      <div class="card-t">Atomic manifest by rename</div>
+      <div class="card-b">
+        Rename is atomic on POSIX, so a half-written manifest cannot exist and
+        needs no checksum. That single rename is the durability point for a
+        flush or a compaction.
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Immutable snapshot reads, not a shared_mutex</div>
-      <div class="card-body">
-        A read copies a reference-counted snapshot pointer under a brief lock,
-        then reads with no lock held. A concurrent compaction can swap in a new
-        table set and even delete the old files without breaking an in-flight
-        read, because POSIX keeps the inode alive behind the open descriptor.
-        Under a <code>shared_mutex</code> readers would hold a lock across their
-        I/O.
+      <div class="card-t">Snapshot reads instead of a shared mutex</div>
+      <div class="card-b">
+        A read copies a reference counted snapshot under a brief lock, then runs
+        with no lock held. Compaction can swap in a new table set and delete the
+        old files without breaking a read in flight, because the open descriptor
+        keeps the inode alive.
       </div>
     </div>
     <div class="card">
-      <div class="card-title">Size-tiered compaction, not leveled</div>
-      <div class="card-body">
-        Lower write amplification and far simpler to implement correctly; it
-        accepts higher transient space amplification, which is the right trade at
-        single-node scope. Leveled is the answer when disk is the binding
-        constraint.
+      <div class="card-t">Size-tiered compaction instead of leveled</div>
+      <div class="card-b">
+        Lower write amplification and much simpler to get right. It costs more
+        temporary disk space, which is the right trade at this scale.
       </div>
     </div>
     <div class="card">
-      <div class="card-title">fsync on every write</div>
-      <div class="card-body">
-        The strongest and simplest durability guarantee. The cost is throughput,
-        which the benchmark quantifies rather than hides — and group commit is
-        the known remedy.
+      <div class="card-t">fsync on every write</div>
+      <div class="card-b">
+        The simplest strong durability guarantee. It costs throughput, which the
+        benchmark measures rather than hides, and group commit is the known fix.
       </div>
     </div>
   </div>
@@ -751,32 +518,28 @@
 
 <section>
   <h2>Limitations</h2>
-  <p>Stated plainly, because a storage engine with no listed limitations is one that has not been measured.</p>
   <ul class="plain">
-    <li><strong>Single node</strong> — no replication, sharding, or distribution.</li>
-    <li><strong>Single writer</strong> — writes serialize under a mutex; reads are concurrent.</li>
-    <li><strong>Point lookups only</strong> — no range scans or user-facing iterators yet.</li>
-    <li><strong>No transactions, MVCC, or snapshot reads.</strong></li>
-    <li><strong>No compression</strong>, and size-tiered compaction only.</li>
-    <li><strong>Synchronous flush</strong> — a flush runs under the write lock, which is the ~34 ms worst-case write visible in the table above.</li>
-    <li><strong>Orphaned SSTables leak</strong> — a table written by a flush or compaction that crashed before its manifest commit is correctly ignored on restart, but never deleted.</li>
+    <li>Single node, and a single writer. Reads run concurrently.</li>
+    <li>Point lookups only. No range scans yet.</li>
+    <li>No transactions, MVCC or snapshot reads.</li>
+    <li>No compression, and size-tiered compaction only.</li>
+    <li>Flush runs under the write lock, which causes the 34 ms worst case above.</li>
+    <li>A table left behind by a crashed flush is ignored on restart but never deleted.</li>
   </ul>
 
   <h3>What I would build next</h3>
   <ul class="plain">
-    <li><strong>Group commit</strong> — batch many writers' records into one <code>write</code> + <code>fsync</code>. This is the measured write bottleneck, so it is first.</li>
-    <li><strong>Range scans</strong> — the per-table ordered iterator already exists for compaction; this is a k-way merge with tombstone shadowing exposed as API.</li>
-    <li><strong>Leveled compaction</strong> — trade write amplification for much lower space amplification.</li>
-    <li><strong>Async flush</strong> — freeze the full memtable and flush it off the write lock, removing the tail stall above.</li>
-    <li><strong>Snapshot reads / MVCC</strong> — tag keys with a sequence number, formalising the internal immutable snapshot into a user-visible one.</li>
+    <li><strong>Group commit</strong>, batching many writers into one fsync. This is the measured bottleneck, so it comes first.</li>
+    <li><strong>Range scans</strong>. The per-table iterator already exists for compaction.</li>
+    <li><strong>Async flush</strong>, to remove the tail stall above.</li>
+    <li><strong>Leveled compaction</strong>, trading write amplification for less disk use.</li>
   </ul>
 </section>
 
 <footer>
-  Built in C++20 with CMake and GoogleTest ·
+  Built in C++20 with CMake and GoogleTest.
   <a href="https://github.com/aayushhks/lsm-storage-engine">github.com/aayushhks/lsm-storage-engine</a><br>
-  All figures on this page were produced by the committed benchmark harness and
-  profiling scripts, on the machine described above.
+  Every figure here comes from the benchmark harness and profiling scripts in the repo.
 </footer>
 
 </div>
