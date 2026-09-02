@@ -177,6 +177,50 @@
   .card-t { font-weight: 600; font-size: 14.5px; margin-bottom: 4px; }
   .card-b { font-size: 13.5px; color: var(--ink-2); line-height: 1.55; }
 
+  /* interactive diagram: radios drive which path is drawn, no script needed */
+  .vh { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .dgm { margin: 2px 0 24px; }
+  .toggle { display: flex; gap: 7px; margin-bottom: 14px; }
+  .toggle label {
+    padding: 6px 14px; border: 1px solid var(--rule); border-radius: 7px;
+    font-size: 13px; color: var(--ink-2); cursor: pointer; user-select: none;
+  }
+  .toggle label:hover { border-color: var(--read); }
+  #path-write:checked ~ .toggle label[for="path-write"],
+  #path-read:checked ~ .toggle label[for="path-read"] {
+    background: var(--read); border-color: var(--read); color: #fff;
+  }
+  #path-write:focus-visible ~ .toggle label[for="path-write"],
+  #path-read:focus-visible ~ .toggle label[for="path-read"] {
+    outline: 2px solid var(--read); outline-offset: 2px;
+  }
+  .dgm figure { margin: 0; }
+  /* Below this width the labels stop being readable, so scroll instead of shrink. */
+  .dgm .svg-scroll { overflow-x: auto; }
+  .dgm svg { width: 100%; min-width: 580px; height: auto; display: block; }
+  .dgm g { transition: opacity .28s ease; }
+  .nd rect { fill: var(--surface-2); stroke: currentColor; stroke-opacity: .3; }
+  .nd .t { fill: var(--ink); font-size: 12.5px; font-weight: 600; }
+  .nd .s { fill: var(--ink-3); font-size: 10.5px; }
+  .flow { fill: none; stroke-width: 1.7; }
+  .fw { stroke: var(--write); }
+  .fr { stroke: var(--read); }
+  .lbl { font-size: 10.5px; }
+  .lw { fill: var(--write); }
+  .lr { fill: var(--read); }
+  .read-layer { opacity: 0; }
+  .n-get { opacity: .3; }
+  #path-read:checked ~ figure .read-layer { opacity: 1; }
+  #path-read:checked ~ figure .write-layer { opacity: 0; }
+  #path-read:checked ~ figure .n-get { opacity: 1; }
+  #path-read:checked ~ figure .n-put,
+  #path-read:checked ~ figure .n-wal,
+  #path-read:checked ~ figure .n-cmp { opacity: .3; }
+
+  figure > svg { width: 100%; height: auto; display: block; }
+  .seg-legend { display: flex; gap: 18px; font-size: 12.5px; color: var(--ink-2); margin: 4px 0 12px; }
+  .seg-legend span { display: inline-flex; align-items: center; gap: 7px; }
+
   ul.plain { margin: 0 0 14px; padding-left: 19px; color: var(--ink-2); }
   ul.plain li { margin-bottom: 6px; line-height: 1.55; max-width: 64ch; }
 
@@ -235,6 +279,97 @@
 
 <section>
   <h2>How it works</h2>
+
+  <div class="dgm">
+    <input class="vh" type="radio" name="path" id="path-write" checked>
+    <input class="vh" type="radio" name="path" id="path-read">
+    <div class="toggle">
+      <label for="path-write">Write path</label>
+      <label for="path-read">Read path</label>
+    </div>
+    <figure>
+      <div class="svg-scroll">
+      <svg viewBox="0 0 700 400" role="img"
+           aria-label="A write goes to the log, is fsynced, then applied to the memtable, and a full memtable is flushed to a new SSTable. A read checks the memtable first, then each SSTable from newest to oldest, skipping tables whose bloom filter rules the key out.">
+        <defs>
+          <marker id="ar-w" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--write)"/>
+          </marker>
+          <marker id="ar-r" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--read)"/>
+          </marker>
+        </defs>
+
+        <g class="nd n-put">
+          <rect x="30" y="16" width="180" height="34" rx="7"/>
+          <text class="t" x="120" y="38" text-anchor="middle">Put(key, value)</text>
+        </g>
+        <g class="nd n-get">
+          <rect x="490" y="16" width="180" height="34" rx="7"/>
+          <text class="t" x="580" y="38" text-anchor="middle">Get(key)</text>
+        </g>
+        <g class="nd n-wal">
+          <rect x="30" y="88" width="180" height="44" rx="7"/>
+          <text class="t" x="120" y="109" text-anchor="middle">Write-ahead log</text>
+          <text class="s" x="120" y="124" text-anchor="middle">on disk, crc32 framed</text>
+        </g>
+        <g class="nd">
+          <rect x="260" y="170" width="180" height="44" rx="7"/>
+          <text class="t" x="350" y="191" text-anchor="middle">Memtable</text>
+          <text class="s" x="350" y="206" text-anchor="middle">skip list, in memory</text>
+        </g>
+        <g class="nd">
+          <rect x="30" y="256" width="180" height="46" rx="7"/>
+          <text class="t" x="120" y="277" text-anchor="middle">SSTable (newest)</text>
+          <text class="s" x="120" y="292" text-anchor="middle">bloom + sparse index</text>
+        </g>
+        <g class="nd">
+          <rect x="260" y="256" width="180" height="46" rx="7"/>
+          <text class="t" x="350" y="277" text-anchor="middle">SSTable</text>
+          <text class="s" x="350" y="292" text-anchor="middle">bloom + sparse index</text>
+        </g>
+        <g class="nd">
+          <rect x="490" y="256" width="180" height="46" rx="7"/>
+          <text class="t" x="580" y="277" text-anchor="middle">SSTable (oldest)</text>
+          <text class="s" x="580" y="292" text-anchor="middle">bloom + sparse index</text>
+        </g>
+        <g class="nd n-cmp">
+          <rect x="260" y="344" width="180" height="38" rx="7"/>
+          <text class="t" x="350" y="368" text-anchor="middle">Compaction thread</text>
+        </g>
+
+        <g class="write-layer">
+          <path class="flow fw" d="M120,50 V84" marker-end="url(#ar-w)"/>
+          <text class="lbl lw" x="132" y="72">1. append, then fsync</text>
+          <path class="flow fw" d="M120,132 V152 H350 V166" marker-end="url(#ar-w)"/>
+          <text class="lbl lw" x="238" y="146" text-anchor="middle">2. apply only after fsync returns</text>
+          <path class="flow fw" d="M350,214 V238 H120 V252" marker-end="url(#ar-w)"/>
+          <text class="lbl lw" x="240" y="228" text-anchor="middle">flush when full, then rename the manifest</text>
+          <path class="flow fw" d="M350,340 V310" marker-end="url(#ar-w)" marker-start="url(#ar-w)"/>
+          <text class="lbl lw" x="362" y="328">merges tables in the background</text>
+        </g>
+
+        <g class="read-layer">
+          <path class="flow fr" d="M580,50 V192 H446" marker-end="url(#ar-r)"/>
+          <text class="lbl lr" x="568" y="120" text-anchor="end">1. check the memtable</text>
+          <path class="flow fr" d="M350,214 V238 H120 V252" marker-end="url(#ar-r)"/>
+          <text class="lbl lr" x="240" y="228" text-anchor="middle">2. on a miss, newest table first</text>
+          <path class="flow fr" d="M212,279 H254" marker-end="url(#ar-r)"/>
+          <text class="lbl lr" x="233" y="270" text-anchor="middle">miss</text>
+          <path class="flow fr" d="M442,279 H484" marker-end="url(#ar-r)"/>
+          <text class="lbl lr" x="463" y="270" text-anchor="middle">miss</text>
+        </g>
+      </svg>
+      </div>
+      <figcaption>
+        The same components, one path at a time. A write is durable before it is
+        visible. A read stops at the first hit, and a bloom filter lets it skip a
+        table that cannot hold the key.
+      </figcaption>
+    </figure>
+  </div>
 
   <div class="step">
     <div class="step-n">1</div>
@@ -449,17 +584,43 @@
     the instruction count is the number worth quoting.
   </p>
 
+  <div class="seg-legend">
+    <span><i class="dot" style="background:var(--write)"></i> wasted work</span>
+    <span><i class="dot" style="background:var(--read)"></i> real work</span>
+  </div>
+
   <figure>
-    <a href="img/read_before.png">
-      <img src="img/read_before.png" alt="Call graph of the read path before the fix, with a large green memset branch">
-    </a>
-    <figcaption>Before. The green memset branch on the right is 44.7% of the read loop.</figcaption>
-  </figure>
-  <figure>
-    <a href="img/read_after.png">
-      <img src="img/read_after.png" alt="Call graph of the read path after the fix, with no memset branch">
-    </a>
-    <figcaption>After. The branch is gone and what remains is real work.</figcaption>
+    <svg viewBox="0 0 700 205" role="img"
+         aria-label="Two bars drawn to the same scale. Before, the read loop is 372.6 million instructions and the memset segment is the largest part. After, it is 182.1 million and the memset segment has almost vanished, while the parsing and comparison segments stay the same size.">
+      <text x="0" y="24" fill="var(--ink)" font-size="12.5" font-weight="600">before</text>
+      <text x="60" y="24" fill="var(--ink-3)" font-size="11.5">372.6M instructions</text>
+      <rect x="0"   y="32" width="266" height="30" rx="3" fill="var(--write)"/>
+      <rect x="268" y="32" width="33"  height="30" rx="3" fill="var(--write)"/>
+      <rect x="303" y="32" width="65"  height="30" rx="3" fill="var(--read)"/>
+      <rect x="370" y="32" width="55"  height="30" rx="3" fill="var(--read)"/>
+      <rect x="427" y="32" width="171" height="30" rx="3" fill="var(--read)" opacity=".45"/>
+
+      <path d="M133,66 V76" stroke="var(--write)" stroke-width="1.4" fill="none"/>
+      <text x="133" y="89" text-anchor="middle" font-size="10.5" fill="var(--write)">memset, 166.5M, thrown away</text>
+
+      <text x="0" y="128" fill="var(--ink)" font-size="12.5" font-weight="600">after</text>
+      <text x="60" y="128" fill="var(--ink-3)" font-size="11.5">182.1M instructions</text>
+      <rect x="0"   y="136" width="2"   height="30" rx="1" fill="var(--write)"/>
+      <rect x="4"   y="136" width="6"   height="30" rx="1" fill="var(--write)"/>
+      <rect x="12"  y="136" width="65"  height="30" rx="3" fill="var(--read)"/>
+      <rect x="79"  y="136" width="55"  height="30" rx="3" fill="var(--read)"/>
+      <rect x="136" y="136" width="157" height="30" rx="3" fill="var(--read)" opacity=".45"/>
+
+      <path d="M73,170 V180" stroke="var(--ink-3)" stroke-width="1.4" fill="none"/>
+      <text x="12" y="194" font-size="10.5" fill="var(--ink-3)">parsing and key comparison, same size in both bars</text>
+    </svg>
+    <figcaption>
+      Both bars are drawn to the same scale. The orange part is work that was
+      thrown away. The blue parts are unchanged in absolute terms, which is the
+      check that the engine is still doing the same job.
+      Full call graphs: <a href="img/read_before.png">before</a>,
+      <a href="img/read_after.png">after</a>.
+    </figcaption>
   </figure>
 </section>
 
